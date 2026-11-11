@@ -12,9 +12,10 @@ Aplikasi komunikasi internal & monitoring operasional **JOSJIS IT TEAM** dengan 
    - Avatar icon tech: Terminal 💻, SysAdmin 🛡️, Server 🖧, Cloud ⚡, Security 🔒, Kopi ☕.
    - Panel profil anggota di pojok kiri bawah dengan indikator status kehadiran (🟢 Online, 🟡 Idle, 🔴 DND, ⚪ Invisible).
 
-2. **💾 Database Persisten (Chat & Channel Saver)**:
-   - **Pesan tidak akan pernah hilang** saat berpindah-pindah channel atau saat aplikasi dibuka ulang!
-   - Seluruh riwayat pesan di semua channel tersimpan di database lokal [`db.js`](file:///d:/Porto%20Project/josjis/2-client-user/db.js).
+2. **💾 Database SQLite3 Persisten & Online Realtime**:
+   - **Data tersimpan permanen di disk server**: Menggunakan mesin **SQLite3** dengan Write-Ahead Logging (WAL) sehingga chat, channel, dan akun anggota tidak akan pernah hilang meski aplikasi atau server ditutup/restart.
+   - **Bisa diinspeksi**: File database `1-server/josjis.db` dapat dibuka dan dilihat layaknya pgAdmin menggunakan tool visual gratis seperti **DB Browser for SQLite** atau **DBeaver**.
+   - **Koneksi Realtime Socket.io**: Terhubung langsung ke backend server online tanpa ketergantungan broker publik eksternal.
    - Channel bawaan divisi IT:
      - `# general`: Diskusi umum tim IT
      - `# it-ops`: Operasional server, deployment, & infrastruktur

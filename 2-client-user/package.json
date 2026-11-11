@@ -9,11 +9,11 @@
     "update": "update.bat"
   },
   "dependencies": {
-    "socket.io-client": "^4.7.5"
+    "socket.io-client": "^4.8.4"
   },
   "devDependencies": {
-    "electron": "^24.22.1",
-    "electron-builder": "^24.13.3"
+    "electron": "^45.1.0",
+    "electron-builder": "^26.18.0"
   },
   "build": {
     "appId": "com.internal.josjis.it",

@@ -21,7 +21,7 @@ class Database {
         secretKey: 'mbuh',
         theme: 'it-dark',
         soundEnabled: true,
-        connectionMode: 'cloud',
+        connectionMode: 'server',
         serverUrl: 'http://localhost:3000',
         stealthOpacity: 0.15
       }
@@ -175,6 +175,14 @@ class Database {
     return { success: true, user: safeUser };
   }
 
+  saveRemoteUser(user) {
+    if (!user || !user.id) return null;
+    this.data.users[user.id] = { ...user };
+    this.data.sessions.currentUserId = user.id;
+    this.save();
+    return user;
+  }
+
   getCurrentUser() {
     const uid = this.data.sessions.currentUserId;
     if (uid && this.data.users[uid]) {
@@ -236,6 +244,24 @@ class Database {
     return Object.values(this.data.channels).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
   }
 
+  setChannels(channelList) {
+    if (!Array.isArray(channelList)) return;
+    if (!this.data.channels) this.data.channels = {};
+    channelList.forEach(ch => {
+      this.data.channels[ch.id] = {
+        id: ch.id,
+        name: ch.name,
+        desc: ch.desc || '',
+        isDefault: Boolean(ch.isDefault),
+        createdAt: ch.createdAt || Date.now()
+      };
+      if (!this.data.messages[ch.id]) {
+        this.data.messages[ch.id] = [];
+      }
+    });
+    this.save();
+  }
+
   createChannel(name, description = '') {
     const cleanName = name.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-');
     if (!cleanName || cleanName.length < 2) {
@@ -273,6 +299,21 @@ class Database {
   }
 
   // ================= MESSAGES & PERSISTENCE =================
+
+  setMessages(channelId, messageList) {
+    if (!channelId || !Array.isArray(messageList)) return;
+    if (!this.data.messages[channelId]) this.data.messages[channelId] = [];
+    
+    const map = new Map();
+    this.data.messages[channelId].forEach(m => map.set(m.id, m));
+    messageList.forEach(m => map.set(m.id, m));
+
+    this.data.messages[channelId] = Array.from(map.values())
+      .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
+      .slice(-2000);
+
+    this.save();
+  }
 
   saveMessage(msg) {
     const chId = msg.channelId || 'general';

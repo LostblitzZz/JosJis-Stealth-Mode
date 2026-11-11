@@ -4,8 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>JOSJIS IT TEAM</title>
-  <!-- Realtime Engine (MQTT over WebSockets) -->
-  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <!-- Realtime Engine: Socket.io Client (Dimuat via local npm di Electron) -->
   <style>
     :root {
       --bg-base: #0b0f14;        /* Deep terminal black-blue */
@@ -1407,20 +1406,17 @@
         <!-- Tab 2: Room & Network -->
         <div id="panelSetRoom" style="display:none;">
           <div class="form-item">
-            <label>Kode Rahasia Room (Secret Key)</label>
-            <input type="text" id="setSecretKey" placeholder="mbuh">
-            <small style="font-size: 11px; color: var(--text-dim); margin-top: 4px; display: block;">Hanya rekan tim dengan Room Key yang sama yang akan terhubung dan dapat bertukar pesan.</small>
+            <label>Online Server Backend (SQLite3 Persistent)</label>
+            <div style="display:flex; gap:8px;">
+              <input type="text" id="setServerUrl" placeholder="http://localhost:3000 (atau IP/Domain Server)" style="flex:1;">
+              <button type="button" class="tb-btn" onclick="testServerConnection()" style="padding:0 12px; font-size:11px; height:36px;">Cek Koneksi</button>
+            </div>
+            <small id="serverPingStatus" style="font-size: 11px; color: var(--text-dim); margin-top: 4px; display: block;">Terhubung ke backend server online yang menyimpan database SQLite (chat, channel, akun) secara permanen.</small>
           </div>
           <div class="form-item">
-            <label>Mode Koneksi Jaringan</label>
-            <select id="setConnMode" onchange="toggleServerInput()">
-              <option value="cloud">Cloud Realtime (Broker EMQX - Siap Pakai Langsung)</option>
-              <option value="server">Dedicated Server (1-Server Localhost / VPS)</option>
-            </select>
-          </div>
-          <div class="form-item" id="serverInputBox" style="display:none;">
-            <label>Dedicated Server URL</label>
-            <input type="text" id="setServerUrl" placeholder="http://localhost:3000">
+            <label>Kode Ruang Tim (Room Key)</label>
+            <input type="text" id="setSecretKey" placeholder="mbuh">
+            <small style="font-size: 11px; color: var(--text-dim); margin-top: 4px; display: block;">Grup kerja internal tim IT Anda.</small>
           </div>
           <div class="form-item">
             <label>Notifikasi Suara</label>
@@ -1466,6 +1462,7 @@
 
   <script>
     const { ipcRenderer } = require('electron');
+    const { io } = require('socket.io-client');
     const db = require('./db.js');
 
     const IT_AVATARS = [
@@ -1479,10 +1476,8 @@
 
     let currentUser = null;
     let currentChannel = 'general';
-    let subscribedTopic = null;
-    let mqttClient = null;
+    let socket = null;
     let onlineTeam = new Map();
-    let presenceTimer = null;
     let isSoundMuted = false;
     let isSending = false;
 
@@ -1591,14 +1586,39 @@
     }
 
     // AUTH SUBMISSIONS
-    function submitLogin(e) {
+    async function submitLogin(e) {
       e.preventDefault();
-      const u = document.getElementById('inputLoginUser').value;
+      const u = document.getElementById('inputLoginUser').value.trim();
       const p = document.getElementById('inputLoginPass').value;
+      const cfg = db.getSettings();
+      const serverUrl = cfg.serverUrl || 'http://localhost:3000';
 
+      // 1. Coba login ke Online Backend Server (SQLite)
+      try {
+        const resp = await fetch(`${serverUrl}/api/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: u, password: p })
+        });
+        const data = await resp.json();
+
+        if (data && data.success && data.user) {
+          currentUser = db.saveRemoteUser(data.user);
+          hideAuth();
+          initDashboard();
+          return;
+        } else if (data && data.message) {
+          showAuthAlert(data.message);
+          return;
+        }
+      } catch (err) {
+        console.warn('Gagal koneksi server login online, mencoba verifikasi offline lokal:', err);
+      }
+
+      // 2. Fallback jika offline
       const res = db.loginUser(u, p);
       if (!res.success) {
-        showAuthAlert(res.message);
+        showAuthAlert(res.message || 'Gagal login ke server online maupun database lokal.');
         return;
       }
       currentUser = res.user;
@@ -1606,21 +1626,54 @@
       initDashboard();
     }
 
-    function submitRegister(e) {
+    async function submitRegister(e) {
       e.preventDefault();
-      const u = document.getElementById('inputRegUser').value;
-      const name = document.getElementById('inputRegName').value;
+      const u = document.getElementById('inputRegUser').value.trim();
+      const name = document.getElementById('inputRegName').value.trim();
       const role = document.getElementById('inputRegRole').value;
       const av = document.getElementById('inputRegAvatar').value;
       const p = document.getElementById('inputRegPass').value;
       const cp = document.getElementById('inputRegConfirm').value;
-      const bio = document.getElementById('inputRegBio').value;
+      const bio = document.getElementById('inputRegBio').value.trim();
 
       if (p !== cp) {
         showAuthAlert('Konfirmasi password tidak cocok!');
         return;
       }
 
+      const cfg = db.getSettings();
+      const serverUrl = cfg.serverUrl || 'http://localhost:3000';
+
+      // 1. Coba register ke Online Backend Server (SQLite)
+      try {
+        const resp = await fetch(`${serverUrl}/api/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: u,
+            password: p,
+            displayName: name,
+            avatar: av,
+            role: role,
+            bio: bio
+          })
+        });
+        const data = await resp.json();
+
+        if (data && data.success && data.user) {
+          currentUser = db.saveRemoteUser(data.user);
+          hideAuth();
+          initDashboard();
+          return;
+        } else if (data && data.message) {
+          showAuthAlert(data.message);
+          return;
+        }
+      } catch (err) {
+        console.warn('Gagal koneksi register online, mencoba simpan ke lokal:', err);
+      }
+
+      // 2. Fallback ke database lokal
       const res = db.registerUser(u, p, name, av, role, bio);
       if (!res.success) {
         showAuthAlert(res.message);
@@ -1634,7 +1687,9 @@
     function logoutCurrentSession() {
       db.logout();
       currentUser = null;
-      if (mqttClient) mqttClient.end(true);
+      if (socket) {
+        try { socket.disconnect(); } catch (e) {}
+      }
       closeModal('settingsModal');
       showAuth();
     }
@@ -1738,10 +1793,6 @@
     function switchChannel(channelId) {
       if (channelId === currentChannel) return;
 
-      if (mqttClient && mqttClient.connected && subscribedTopic) {
-        mqttClient.unsubscribe(subscribedTopic);
-      }
-
       currentChannel = channelId;
 
       document.querySelectorAll('.channel-item').forEach(el => {
@@ -1766,9 +1817,10 @@
 
       loadChannelMessages(channelId);
 
-      if (mqttClient && mqttClient.connected) {
-        subscribedTopic = getMqttTopic(currentChannel);
-        mqttClient.subscribe(subscribedTopic);
+      if (socket && socket.connected) {
+        socket.emit('channel:join', channelId);
+        const cfg = db.getSettings();
+        syncMessagesFromServer(cfg.serverUrl || 'http://localhost:3000', channelId);
       }
     }
 
@@ -1966,107 +2018,138 @@
       document.body.removeChild(a);
     }
 
-    // ================= REALTIME NETWORKING =================
-
-    function getMqttTopic(channel) {
-      const cfg = db.getSettings();
-      const key = cfg.secretKey || 'mbuh';
-      return `josjis_it_network/${key}/${channel}`;
-    }
-
-    function getPresenceTopic() {
-      const cfg = db.getSettings();
-      const key = cfg.secretKey || 'mbuh';
-      return `josjis_it_network/${key}/_presence`;
-    }
+    // ================= REALTIME NETWORKING (SOCKET.IO) =================
 
     function connectNetwork() {
-      if (mqttClient) mqttClient.end(true);
+      if (socket) {
+        try { socket.disconnect(); } catch (e) {}
+      }
 
+      const cfg = db.getSettings();
+      const serverUrl = cfg.serverUrl || 'http://localhost:3000';
       const statusEl = document.getElementById('titleStatusText');
-      statusEl.innerText = '• Menghubungkan...';
+
+      statusEl.innerText = '• Menghubungkan ke Server...';
       statusEl.style.color = 'var(--terminal-amber)';
 
-      mqttClient = mqtt.connect('wss://broker.emqx.io:8084/mqtt', {
-        clientId: 'josjis_it_' + (currentUser ? currentUser.id : 'anon') + '_' + Math.random().toString(16).substring(2, 6),
-        keepalive: 60,
-        reconnectPeriod: 2500
-      });
+      try {
+        socket = io(serverUrl, {
+          transports: ['websocket', 'polling'],
+          reconnection: true,
+          reconnectionDelay: 2500,
+          timeout: 10000
+        });
 
-      mqttClient.on('connect', () => {
-        statusEl.innerText = '• Terhubung (Online)';
-        statusEl.style.color = 'var(--terminal-green)';
+        socket.on('connect', () => {
+          statusEl.innerText = '• Online (Server SQLite)';
+          statusEl.style.color = 'var(--terminal-green)';
 
-        subscribedTopic = getMqttTopic(currentChannel);
-        mqttClient.subscribe(subscribedTopic);
-        mqttClient.subscribe(getPresenceTopic());
-
-        sendHeartbeat();
-        if (presenceTimer) clearInterval(presenceTimer);
-        presenceTimer = setInterval(sendHeartbeat, 15000);
-
-        if (currentUser) {
-          onlineTeam.set(currentUser.id, currentUser);
-          renderMembers();
-        }
-      });
-
-      mqttClient.on('message', (topic, raw) => {
-        try {
-          const payload = JSON.parse(raw.toString());
-
-          if (topic === getPresenceTopic()) {
-            if (payload.type === 'presence' && payload.user) {
-              onlineTeam.set(payload.user.id, payload.user);
-              renderMembers();
-            }
-            return;
+          if (currentUser) {
+            socket.emit('user:join', currentUser);
           }
 
-          if (payload.type === 'it_chat') {
-            const isFromMe = currentUser && payload.userId === currentUser.id;
-            const saved = db.saveMessage(payload);
+          // Sinkronisasi channels & messages dari server
+          syncChannelsFromServer(serverUrl);
+          socket.emit('channel:join', currentChannel);
+          syncMessagesFromServer(serverUrl, currentChannel);
+        });
 
-            if (payload.channelId === currentChannel) {
-              if (isFromMe && document.getElementById('msg-' + payload.id)) {
-                return;
-              }
-              appendMessageRow(saved, !isFromMe);
+        socket.on('disconnect', () => {
+          statusEl.innerText = '• Offline (Reconnecting...)';
+          statusEl.style.color = 'var(--terminal-red)';
+        });
+
+        socket.on('connect_error', () => {
+          statusEl.innerText = '• Offline (Gagal konek)';
+          statusEl.style.color = 'var(--terminal-red)';
+        });
+
+        socket.on('chat:message', (payload) => {
+          if (!payload) return;
+          const isFromMe = currentUser && (payload.userId === currentUser.id || payload.username === currentUser.username);
+          const saved = db.saveMessage(payload);
+
+          if (payload.channelId === currentChannel) {
+            appendMessageRow(saved, !isFromMe);
+          } else {
+            const unread = document.getElementById(`unread-${payload.channelId}`);
+            if (unread) {
+              const count = parseInt(unread.innerText || '0') + 1;
+              unread.innerText = count;
+              unread.classList.add('show');
+            }
+            if (!isFromMe) playBeep();
+          }
+        });
+
+        socket.on('members:update', (membersList) => {
+          if (Array.isArray(membersList)) {
+            onlineTeam.clear();
+            membersList.forEach(m => {
+              if (m && m.id) onlineTeam.set(m.id, m);
+            });
+            renderMembers();
+          }
+        });
+
+        socket.on('channel:created', (newChannel) => {
+          if (newChannel) {
+            db.setChannels([newChannel]);
+            renderChannels();
+          }
+        });
+
+        socket.on('channel:deleted', (deletedId) => {
+          if (deletedId) {
+            db.deleteChannel(deletedId);
+            if (currentChannel === deletedId) {
+              switchChannel('general');
             } else {
-              const unread = document.getElementById(`unread-${payload.channelId}`);
-              if (unread) {
-                const count = parseInt(unread.innerText || '0') + 1;
-                unread.innerText = count;
-                unread.classList.add('show');
-              }
-              if (!isFromMe) playBeep();
+              renderChannels();
             }
           }
-        } catch (e) {}
-      });
+        });
 
-      mqttClient.on('offline', () => {
-        statusEl.innerText = '• Offline (Reconnecting...)';
+        socket.on('chat:cleared', ({ channelId }) => {
+          if (channelId) {
+            db.clearChannelMessages(channelId);
+            if (currentChannel === channelId) {
+              loadChannelMessages(channelId);
+            }
+          }
+        });
+
+      } catch (err) {
+        console.error('Socket init error:', err);
+        statusEl.innerText = '• Offline';
         statusEl.style.color = 'var(--terminal-red)';
-      });
+      }
     }
 
-    function sendHeartbeat() {
-      if (!mqttClient || !mqttClient.connected || !currentUser) return;
-      const data = {
-        type: 'presence',
-        user: {
-          id: currentUser.id,
-          username: currentUser.username,
-          displayName: currentUser.displayName,
-          role: currentUser.role || 'IT Staff',
-          avatar: currentUser.avatar,
-          status: currentUser.status || 'online',
-          bio: currentUser.bio || '',
-          lastSeen: Date.now()
+    async function syncChannelsFromServer(serverUrl) {
+      try {
+        const res = await fetch(`${serverUrl}/api/channels`);
+        const data = await res.json();
+        if (data && data.success && Array.isArray(data.channels)) {
+          db.setChannels(data.channels);
+          renderChannels();
         }
-      };
-      mqttClient.publish(getPresenceTopic(), JSON.stringify(data));
+      } catch (e) {
+        console.warn('Gagal sinkron channels:', e);
+      }
+    }
+
+    async function syncMessagesFromServer(serverUrl, channelId) {
+      try {
+        const res = await fetch(`${serverUrl}/api/messages/${channelId}`);
+        const data = await res.json();
+        if (data && data.success && Array.isArray(data.messages)) {
+          db.setMessages(channelId, data.messages);
+          loadChannelMessages(channelId);
+        }
+      } catch (e) {
+        console.warn('Gagal sinkron messages:', e);
+      }
     }
 
     function renderMembers() {
@@ -2109,7 +2192,6 @@
       isSending = true;
 
       const msgObj = {
-        type: 'it_chat',
         id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
         channelId: currentChannel,
         userId: currentUser.id,
@@ -2120,14 +2202,17 @@
         text: text,
         image: hasImage ? pendingImage.dataUrl : null,
         timestamp: Date.now(),
-        timeStr: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+        timeStr: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        isSystem: false
       };
 
+      // Simpan lokal seketika & tampilkan ke UI
       db.saveMessage(msgObj);
       appendMessageRow(msgObj, false);
 
-      if (mqttClient && mqttClient.connected) {
-        mqttClient.publish(getMqttTopic(currentChannel), JSON.stringify(msgObj));
+      // Kirim realtime ke Socket.io Server (otomatis tersimpan di SQLite)
+      if (socket && socket.connected) {
+        socket.emit('chat:message', msgObj);
       }
 
       input.value = '';
@@ -2159,9 +2244,31 @@
       input.value = input.value.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
     }
 
-    function confirmCreateChannel() {
+    async function confirmCreateChannel() {
       const name = document.getElementById('inputNewChannelName').value.trim();
       const desc = document.getElementById('inputNewChannelDesc').value.trim();
+      if (!name) return;
+
+      const cfg = db.getSettings();
+      const serverUrl = cfg.serverUrl || 'http://localhost:3000';
+
+      try {
+        const resp = await fetch(`${serverUrl}/api/channels`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, desc })
+        });
+        const data = await resp.json();
+        if (data && data.success && data.channel) {
+          db.setChannels([data.channel]);
+          closeModal('addChannelModal');
+          renderChannels();
+          switchChannel(data.channel.id);
+          return;
+        }
+      } catch (e) {
+        console.warn('Gagal buat channel online:', e);
+      }
 
       const res = db.createChannel(name, desc);
       if (!res.success) {
@@ -2173,7 +2280,14 @@
       switchChannel(res.channel.id);
     }
 
-    function deleteChannel(channelId) {
+    async function deleteChannel(channelId) {
+      const cfg = db.getSettings();
+      const serverUrl = cfg.serverUrl || 'http://localhost:3000';
+
+      try {
+        await fetch(`${serverUrl}/api/channels/${channelId}`, { method: 'DELETE' });
+      } catch (e) {}
+
       const res = db.deleteChannel(channelId);
       if (!res.success) {
         alert(res.message);
@@ -2200,11 +2314,9 @@
 
       const cfg = db.getSettings();
       document.getElementById('setSecretKey').value = cfg.secretKey || 'mbuh';
-      document.getElementById('setConnMode').value = cfg.connectionMode || 'cloud';
       document.getElementById('setServerUrl').value = cfg.serverUrl || 'http://localhost:3000';
       document.getElementById('setSoundOn').checked = cfg.soundEnabled !== false;
 
-      toggleServerInput();
       switchSettings(defaultTab);
       openModal('settingsModal');
     }
@@ -2219,9 +2331,26 @@
       document.getElementById('panelSetUpdate').style.display = tab === 'update' ? 'block' : 'none';
     }
 
-    function toggleServerInput() {
-      const mode = document.getElementById('setConnMode').value;
-      document.getElementById('serverInputBox').style.display = mode === 'server' ? 'block' : 'none';
+    async function testServerConnection() {
+      const url = document.getElementById('setServerUrl').value.trim();
+      const statusEl = document.getElementById('serverPingStatus');
+      statusEl.innerText = 'Sedang memeriksa koneksi ke server...';
+      statusEl.style.color = 'var(--terminal-amber)';
+
+      try {
+        const resp = await fetch(`${url}/api/status`);
+        const data = await resp.json();
+        if (data && data.status === 'online') {
+          statusEl.innerText = `✅ Terhubung! Server: ${data.name} | Database: ${data.database}`;
+          statusEl.style.color = 'var(--terminal-green)';
+        } else {
+          statusEl.innerText = `⚠️ Respons tak dikenal dari server.`;
+          statusEl.style.color = 'var(--terminal-amber)';
+        }
+      } catch (e) {
+        statusEl.innerText = `❌ Gagal terhubung ke ${url}. Pastikan server aktif dan URL benar.`;
+        statusEl.style.color = 'var(--terminal-red)';
+      }
     }
 
     function saveSettingsForm() {
@@ -2244,13 +2373,11 @@
       if (profRes.success) currentUser = profRes.user;
 
       const newKey = document.getElementById('setSecretKey').value.trim() || 'mbuh';
-      const newMode = document.getElementById('setConnMode').value;
-      const newUrl = document.getElementById('setServerUrl').value.trim();
+      const newUrl = document.getElementById('setServerUrl').value.trim() || 'http://localhost:3000';
       const newSound = document.getElementById('setSoundOn').checked;
 
       db.saveSettings({
         secretKey: newKey,
-        connectionMode: newMode,
         serverUrl: newUrl,
         soundEnabled: newSound
       });

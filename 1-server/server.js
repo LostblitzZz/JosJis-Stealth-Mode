@@ -1,70 +1,29 @@
 /**
- * JOSJIS IT TEAM - Central Backend Server
- * Express + Socket.io + Persistent Database
+ * JOSJIS IT TEAM - Central Backend Server v2.2
+ * Express + Socket.io + SQLite3 Persistent Database
  */
 
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
-const fs = require('fs');
-const path = require('path');
 const crypto = require('crypto');
+const db = require('./database');
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: '*', methods: ['GET', 'POST'] }
+  cors: { origin: '*', methods: ['GET', 'POST'] },
+  maxHttpBufferSize: 1e7 // 10MB limit for image attachments
 });
 
 const PORT = process.env.PORT || 3000;
-const DB_FILE = path.join(__dirname, 'server_db.json');
-
-let db = {
-  users: {},
-  channels: {
-    general: { id: 'general', name: 'general', desc: 'Diskusi umum divisi IT & operasional', isDefault: true, createdAt: Date.now() },
-    'it-ops': { id: 'it-ops', name: 'it-ops', desc: 'Operasional server, maintenance, & infra', isDefault: true, createdAt: Date.now() },
-    'incident-alerts': { id: 'incident-alerts', name: 'incident-alerts', desc: 'Laporan insiden kritis & bug', isDefault: true, createdAt: Date.now() },
-    'server-log': { id: 'server-log', name: 'server-log', desc: 'Log aktivitas daemon & koneksi', isDefault: true, createdAt: Date.now() },
-    'random-talk': { id: 'random-talk', name: 'random-talk', desc: 'Obrolan santai tim IT & kopi', isDefault: true, createdAt: Date.now() }
-  },
-  messages: {
-    general: [],
-    'it-ops': [],
-    'incident-alerts': [],
-    'server-log': [],
-    'random-talk': []
-  }
-};
-
-function loadDb() {
-  try {
-    if (fs.existsSync(DB_FILE)) {
-      const raw = fs.readFileSync(DB_FILE, 'utf8');
-      db = Object.assign(db, JSON.parse(raw));
-      console.log('[DB] Data server JOSJIS IT TEAM berhasil dimuat.');
-    }
-  } catch (e) {
-    console.error('[DB] Gagal memuat server_db.json:', e);
-  }
-}
-
-function saveDb() {
-  try {
-    const tmp = DB_FILE + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(db, null, 2), 'utf8');
-    fs.renameSync(tmp, DB_FILE);
-  } catch (e) {
-    console.error('[DB] Gagal menyimpan server_db.json:', e);
-  }
-}
-
-loadDb();
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '15mb' }));
+app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
+// ================= PASSWORD UTILS =================
 function hashPassword(password, salt) {
   if (!salt) salt = crypto.randomBytes(16).toString('hex');
   const hash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
@@ -76,136 +35,243 @@ function verifyPassword(password, hash, salt) {
   return verify === hash;
 }
 
-// Health check
-app.get('/api/status', (req, res) => {
-  res.json({ status: 'online', name: 'JOSJIS IT TEAM Central Server', version: '2.1.0' });
-});
-
-// Register
-app.post('/api/register', (req, res) => {
-  const { username, password, displayName, avatar, role, bio } = req.body;
-  if (!username || username.trim().length < 3) {
-    return res.status(400).json({ success: false, message: 'Username minimal 3 karakter!' });
-  }
-  if (!password || password.length < 4) {
-    return res.status(400).json({ success: false, message: 'Password minimal 4 karakter!' });
-  }
-
-  const cleanUser = username.trim().toLowerCase();
-  const exists = Object.values(db.users).find(u => u.username.toLowerCase() === cleanUser);
-  if (exists) {
-    return res.status(400).json({ success: false, message: 'Username sudah digunakan!' });
-  }
-
-  const { hash, salt } = hashPassword(password);
-  const userId = 'usr_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
-
-  const newUser = {
-    id: userId,
-    username: cleanUser,
-    displayName: displayName?.trim() || cleanUser,
-    role: role?.trim() || 'IT Staff',
-    passwordHash: hash,
-    salt,
-    avatar: avatar || 'avatar-terminal',
-    bio: bio?.trim() || 'Anggota JOSJIS IT TEAM',
-    status: 'online',
-    createdAt: Date.now()
-  };
-
-  db.users[userId] = newUser;
-  saveDb();
-
-  const safe = { ...newUser };
-  delete safe.passwordHash;
-  delete safe.salt;
-  res.json({ success: true, user: safe });
-});
-
-// Login
-app.post('/api/login', (req, res) => {
-  const { username, password } = req.body;
-  const cleanUser = username?.trim().toLowerCase();
-  const user = Object.values(db.users).find(u => u.username.toLowerCase() === cleanUser);
-
-  if (!user || !verifyPassword(password, user.passwordHash, user.salt)) {
-    return res.status(401).json({ success: false, message: 'Username atau password salah!' });
-  }
-
-  user.status = 'online';
-  saveDb();
-
+function sanitizeUser(user) {
+  if (!user) return null;
   const safe = { ...user };
   delete safe.passwordHash;
   delete safe.salt;
-  res.json({ success: true, user: safe });
+  return safe;
+}
+
+// ================= REST API ROUTES =================
+
+// 1. Health check
+app.get('/api/status', async (req, res) => {
+  try {
+    const channels = await db.getChannels();
+    res.json({
+      status: 'online',
+      name: 'JOSJIS IT TEAM Central Server',
+      version: '2.2.0',
+      database: 'SQLite3 (Persistent)',
+      totalChannels: channels.length,
+      timestamp: Date.now()
+    });
+  } catch (e) {
+    res.status(500).json({ status: 'error', message: e.message });
+  }
 });
 
-// Channels & Messages
-app.get('/api/channels', (req, res) => {
-  res.json({ success: true, channels: Object.values(db.channels) });
+// 2. Register
+app.post('/api/register', async (req, res) => {
+  try {
+    const { username, password, displayName, avatar, role, bio } = req.body;
+    if (!username || username.trim().length < 3) {
+      return res.status(400).json({ success: false, message: 'Username minimal 3 karakter!' });
+    }
+    if (!password || password.length < 4) {
+      return res.status(400).json({ success: false, message: 'Password minimal 4 karakter!' });
+    }
+
+    const cleanUser = username.trim().toLowerCase();
+    const existing = await db.getUserByUsername(cleanUser);
+    if (existing) {
+      return res.status(400).json({ success: false, message: 'Username sudah digunakan anggota lain!' });
+    }
+
+    const { hash, salt } = hashPassword(password);
+    const userId = 'usr_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+
+    const user = await db.registerUser({
+      id: userId,
+      username: cleanUser,
+      passwordHash: hash,
+      salt,
+      displayName: displayName?.trim() || cleanUser,
+      role: role?.trim() || 'IT Staff',
+      avatar: avatar || 'avatar-terminal',
+      bio: bio?.trim() || 'Anggota JOSJIS IT TEAM'
+    });
+
+    res.json({ success: true, user: sanitizeUser(user) });
+  } catch (e) {
+    console.error('[API] Register error:', e);
+    res.status(500).json({ success: false, message: 'Gagal mendaftar: ' + e.message });
+  }
 });
 
-app.get('/api/messages/:channelId', (req, res) => {
-  const chId = req.params.channelId;
-  const msgs = db.messages[chId] || [];
-  res.json({ success: true, messages: msgs.slice(-200) });
+// 3. Login
+app.post('/api/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    const cleanUser = username?.trim().toLowerCase();
+    const user = await db.getUserByUsername(cleanUser);
+
+    if (!user || !verifyPassword(password, user.passwordHash, user.salt)) {
+      return res.status(401).json({ success: false, message: 'Username atau password salah!' });
+    }
+
+    await db.updateUserLogin(user.id);
+    const updated = await db.getUserById(user.id);
+
+    res.json({ success: true, user: sanitizeUser(updated) });
+  } catch (e) {
+    console.error('[API] Login error:', e);
+    res.status(500).json({ success: false, message: 'Gagal login: ' + e.message });
+  }
 });
 
-// Socket.io
-const activeSockets = new Map();
+// 4. Update Profile
+app.post('/api/profile/:id', async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const { displayName, role, avatar, bio, status, newPassword } = req.body;
+
+    const updates = {};
+    if (displayName) updates.displayName = displayName;
+    if (role) updates.role = role;
+    if (avatar) updates.avatar = avatar;
+    if (bio !== undefined) updates.bio = bio;
+    if (status) updates.status = status;
+    if (newPassword && newPassword.length >= 4) {
+      const { hash, salt } = hashPassword(newPassword);
+      updates.passwordHash = hash;
+      updates.salt = salt;
+    }
+
+    const updatedUser = await db.updateUserProfile(userId, updates);
+    res.json({ success: true, user: sanitizeUser(updatedUser) });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// 5. Channels
+app.get('/api/channels', async (req, res) => {
+  try {
+    const channels = await db.getChannels();
+    res.json({ success: true, channels });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+app.post('/api/channels', async (req, res) => {
+  try {
+    const { name, desc } = req.body;
+    if (!name || name.trim().length < 2) {
+      return res.status(400).json({ success: false, message: 'Nama channel minimal 2 karakter!' });
+    }
+    const channel = await db.createChannel({ name, desc });
+    io.emit('channel:created', channel);
+    res.json({ success: true, channel });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e.message });
+  }
+});
+
+app.delete('/api/channels/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    await db.deleteChannel(id);
+    io.emit('channel:deleted', id);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e.message });
+  }
+});
+
+// 6. Messages
+app.get('/api/messages/:channelId', async (req, res) => {
+  try {
+    const chId = req.params.channelId;
+    const limit = parseInt(req.query.limit) || 200;
+    const messages = await db.getMessages(chId, limit);
+    res.json({ success: true, messages });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+app.post('/api/messages/clear/:channelId', async (req, res) => {
+  try {
+    const chId = req.params.channelId;
+    await db.clearChannelMessages(chId);
+    io.emit('chat:cleared', { channelId: chId });
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// ================= SOCKET.IO REALTIME =================
+const onlineUsers = new Map(); // socket.id -> userObj
 
 io.on('connection', (socket) => {
-  console.log(`[SOCKET] Sesi terhubung: ${socket.id}`);
+  console.log(`[SOCKET] Klien terhubung: ${socket.id}`);
 
+  // User join / heartbeat
   socket.on('user:join', (userData) => {
     if (userData && userData.id) {
-      activeSockets.set(socket.id, userData);
-      io.emit('members:update', Array.from(activeSockets.values()));
+      onlineUsers.set(socket.id, userData);
+      broadcastOnlineMembers();
     }
   });
 
+  // Join channel room
   socket.on('channel:join', (channelId) => {
     socket.join(channelId);
   });
 
-  socket.on('chat:message', (msg) => {
-    const chId = msg.channelId || 'general';
-    if (!db.messages[chId]) db.messages[chId] = [];
+  // Send chat message
+  socket.on('chat:message', async (rawMsg, ack) => {
+    try {
+      const savedMsg = await db.saveMessage(rawMsg);
+      io.emit('chat:message', savedMsg);
+      if (typeof ack === 'function') ack({ success: true, message: savedMsg });
+    } catch (err) {
+      console.error('[SOCKET] Gagal simpan pesan:', err);
+      if (typeof ack === 'function') ack({ success: false, error: err.message });
+    }
+  });
 
-    const fullMsg = {
-      id: msg.id || 'msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
-      channelId: chId,
-      userId: msg.userId,
-      username: msg.username,
-      displayName: msg.displayName || msg.username,
-      role: msg.role || 'IT Staff',
-      avatar: msg.avatar || 'avatar-terminal',
-      text: msg.text,
-      image: msg.image || null,
-      timestamp: msg.timestamp || Date.now(),
-      timeStr: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      isSystem: Boolean(msg.isSystem)
-    };
-
-    db.messages[chId].push(fullMsg);
-    if (db.messages[chId].length > 2000) db.messages[chId] = db.messages[chId].slice(-2000);
-    saveDb();
-
-    io.emit('chat:message', fullMsg);
+  // User presence / status change
+  socket.on('user:status', (statusData) => {
+    const user = onlineUsers.get(socket.id);
+    if (user) {
+      user.status = statusData.status || 'online';
+      onlineUsers.set(socket.id, user);
+      broadcastOnlineMembers();
+    }
   });
 
   socket.on('disconnect', () => {
-    activeSockets.delete(socket.id);
-    io.emit('members:update', Array.from(activeSockets.values()));
-    console.log(`[SOCKET] Sesi terputus: ${socket.id}`);
+    onlineUsers.delete(socket.id);
+    broadcastOnlineMembers();
+    console.log(`[SOCKET] Klien terputus: ${socket.id}`);
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`=======================================================`);
-  console.log(`  🛡️ JOSJIS IT TEAM - BACKEND SERVER BERJALAN`);
-  console.log(`  🌐 Port: http://localhost:${PORT}`);
-  console.log(`  📁 Database: ${DB_FILE}`);
-  console.log(`=======================================================`);
-});
+function broadcastOnlineMembers() {
+  const uniqueUsers = new Map();
+  onlineUsers.forEach((u) => {
+    if (u && u.id) uniqueUsers.set(u.id, u);
+  });
+  io.emit('members:update', Array.from(uniqueUsers.values()));
+}
+
+// ================= START SERVER =================
+db.init()
+  .then(() => {
+    server.listen(PORT, '0.0.0.0', () => {
+      console.log(`=======================================================`);
+      console.log(`  🛡️ JOSJIS IT TEAM - ONLINE SERVER v2.2 AKTIF`);
+      console.log(`  🌐 Local: http://localhost:${PORT}`);
+      console.log(`  🗄️ Database: SQLite3 (josjis.db - WAL Enabled)`);
+      console.log(`=======================================================`);
+    });
+  })
+  .catch((err) => {
+    console.error('Fatal: Gagal memulai database server:', err);
+    process.exit(1);
+  });
