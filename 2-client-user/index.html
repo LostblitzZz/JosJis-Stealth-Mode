@@ -4,7 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>JOSJIS IT TEAM</title>
-  <!-- Realtime Engine: Socket.io Client (Dimuat via local npm di Electron) -->
+  <!-- Standalone Bundled Realtime Engines (Nol Dependensi & Anti-Gagal) -->
+  <script src="./mqtt.min.js"></script>
+  <script src="./socket.io.min.js"></script>
   <style>
     :root {
       --bg-base: #0b0f14;        /* Deep terminal black-blue */
@@ -1095,7 +1097,7 @@
         <span id="miniChannelName">#general</span>
         <span style="font-size: 9px; opacity: 0.6;">▾</span>
       </div>
-      <span id="titleStatusText" style="color: var(--terminal-amber); font-weight: normal; font-size: 11px;">• Menghubungkan...</span>
+      <span id="titleStatusText" style="color: var(--terminal-green); font-weight: normal; font-size: 11px;">• Siap</span>
     </div>
 
     <!-- Quick Channel Dropdown for Mini Mode -->
@@ -1471,10 +1473,11 @@
   <script>
     const { ipcRenderer } = require('electron');
     const crypto = require('crypto');
-    const mqtt = require('mqtt');
-    let io = null;
-    try { io = require('socket.io-client').io; } catch (e) {}
     const db = require('./db.js');
+
+    // Standalone / Bundled Realtime Engines (Nol Crash)
+    const mqttEngine = window.mqtt || (function() { try { return require('mqtt'); } catch(e){ return null; } })();
+    const ioEngine = window.io || (function() { try { return require('socket.io-client').io || require('socket.io-client'); } catch(e){ return null; } })();
 
     // ================= ENKRIPSI END-TO-END (AES-256-GCM) =================
     function encryptText(plainText, secretKey) {
@@ -2092,21 +2095,47 @@
       }
     }
 
+    const CLOUD_BROKERS = [
+      'wss://broker.emqx.io:8084/mqtt',
+      'wss://broker.hivemq.com:8884/mqtt'
+    ];
+    let currentBrokerIdx = 0;
+
     function connectCloudMqtt(statusEl, cfg) {
-      statusEl.innerText = '• Menghubungkan ke Cloud...';
+      statusEl.innerText = '• Menghubungkan...';
       statusEl.style.color = 'var(--terminal-amber)';
 
       const key = cfg.secretKey || 'mbuh';
-      const brokerUrl = 'wss://broker.emqx.io:8084/mqtt';
+      const engine = mqttEngine || window.mqtt;
+
+      if (!engine) {
+        statusEl.innerText = '• Engine Cloud Tidak Tersedia';
+        statusEl.style.color = 'var(--terminal-red)';
+        console.error('MQTT Engine tidak ditemukan.');
+        return;
+      }
+
+      const brokerUrl = CLOUD_BROKERS[currentBrokerIdx % CLOUD_BROKERS.length];
 
       try {
-        mqttClient = mqtt.connect(brokerUrl, {
+        mqttClient = engine.connect(brokerUrl, {
           clientId: 'josjis_it_' + (currentUser ? currentUser.id : 'anon') + '_' + Math.random().toString(16).substring(2, 6),
           keepalive: 60,
-          reconnectPeriod: 2500
+          reconnectPeriod: 3000,
+          connectTimeout: 4000
         });
 
+        let connectTimer = setTimeout(() => {
+          if (!mqttClient.connected) {
+            console.warn(`Timeout koneksi ke ${brokerUrl}, mencoba broker alternatif...`);
+            currentBrokerIdx++;
+            if (mqttClient) { try { mqttClient.end(true); } catch(e){} }
+            connectCloudMqtt(statusEl, cfg);
+          }
+        }, 4500);
+
         mqttClient.on('connect', () => {
+          clearTimeout(connectTimer);
           statusEl.innerText = '• Online (Cloud Realtime)';
           statusEl.style.color = 'var(--terminal-green)';
 
@@ -2174,9 +2203,10 @@
           statusEl.style.color = 'var(--terminal-red)';
         });
 
-        mqttClient.on('error', () => {
-          statusEl.innerText = '• Offline (Gagal konek cloud)';
-          statusEl.style.color = 'var(--terminal-red)';
+        mqttClient.on('error', (err) => {
+          console.warn('MQTT error:', err);
+          statusEl.innerText = '• Menghubungkan broker cadangan...';
+          statusEl.style.color = 'var(--terminal-amber)';
         });
       } catch (err) {
         console.error('MQTT connect error:', err);
@@ -2208,14 +2238,15 @@
       statusEl.style.color = 'var(--terminal-amber)';
 
       const serverUrl = cfg.serverUrl || 'http://192.168.18.50:3000';
-      if (!io) {
+      const engine = ioEngine || window.io;
+      if (!engine) {
         statusEl.innerText = '• Socket.io tidak tersedia';
         statusEl.style.color = 'var(--terminal-red)';
         return;
       }
 
       try {
-        socketClient = io(serverUrl, {
+        socketClient = engine(serverUrl, {
           transports: ['websocket', 'polling'],
           reconnection: true,
           reconnectionDelay: 2500,

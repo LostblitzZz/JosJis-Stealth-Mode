@@ -26,6 +26,8 @@
       "main.js",
       "db.js",
       "index.html",
+      "mqtt.min.js",
+      "socket.io.min.js",
       "package.json"
     ],
     "win": {
