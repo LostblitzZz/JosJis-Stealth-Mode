@@ -1,0 +1,37 @@
+{
+  "name": "josjis-it-team",
+  "version": "2.2.0",
+  "description": "JOSJIS IT TEAM - Internal Secure Communication & Ops Network",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "update": "update.bat"
+  },
+  "dependencies": {
+    "socket.io-client": "^4.7.5"
+  },
+  "devDependencies": {
+    "electron": "^24.22.1",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.internal.josjis.it",
+    "productName": "JOSJIS IT TEAM",
+    "compression": "maximum",
+    "asar": true,
+    "removePackageScripts": true,
+    "files": [
+      "main.js",
+      "db.js",
+      "index.html",
+      "package.json"
+    ],
+    "win": {
+      "target": "portable"
+    },
+    "portable": {
+      "artifactName": "josjis.exe"
+    }
+  }
+}

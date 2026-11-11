@@ -1,0 +1,77 @@
+{
+  "users": {
+    "usr_1793691003039_5tst": {
+      "id": "usr_1793691003039_5tst",
+      "username": "alex",
+      "displayName": "Alex Developer",
+      "passwordHash": "ef254950685906a1314e2c62addd1869205cf1d241ea29136a0daf6676c63b37b9f08a7f95a62a32d2330dd76b1dec9e118808a81b7f6e246b15315e88e67af3",
+      "salt": "60515fa703eddcaa93a8f17a9c35bedb",
+      "avatar": "avatar-emerald",
+      "bio": "Anggota Josjis Discord",
+      "status": "online",
+      "customStatus": "",
+      "createdAt": 1793691003039,
+      "lastLogin": 1793691003039
+    }
+  },
+  "channels": {
+    "general": {
+      "id": "general",
+      "name": "general",
+      "desc": "Obrolan santai dan diskusi umum",
+      "isDefault": true,
+      "createdAt": 1793690995335
+    },
+    "server-log": {
+      "id": "server-log",
+      "name": "server-log",
+      "desc": "Log aktivitas dan status sistem",
+      "isDefault": true,
+      "createdAt": 1793690995335
+    },
+    "random": {
+      "id": "random",
+      "name": "random",
+      "desc": "Meme, lelucon, dan obrolan bebas",
+      "isDefault": true,
+      "createdAt": 1793690995335
+    },
+    "pengumuman": {
+      "id": "pengumuman",
+      "name": "pengumuman",
+      "desc": "Pengumuman dan update penting",
+      "isDefault": true,
+      "createdAt": 1793690995335
+    }
+  },
+  "messages": {
+    "general": [
+      {
+        "id": "msg_1793691003043_7qvk2",
+        "channelId": "general",
+        "userId": "usr_1793691003039_5tst",
+        "username": "alex",
+        "displayName": "Alex Developer",
+        "avatar": "avatar-blurple",
+        "text": "Hello Discord!",
+        "timestamp": 1793691003043,
+        "timeStr": "14.30",
+        "dateStr": "3 Nov 2026",
+        "isSystem": false
+      }
+    ],
+    "server-log": [],
+    "random": [],
+    "pengumuman": []
+  },
+  "sessions": {
+    "currentUserId": "usr_1793691003039_5tst",
+    "rememberMe": true,
+    "secretKey": "mbuh",
+    "theme": "dark",
+    "soundEnabled": true,
+    "connectionMode": "cloud",
+    "serverUrl": "http://localhost:3000",
+    "stealthOpacity": 0.2
+  }
+}
