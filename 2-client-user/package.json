@@ -9,6 +9,7 @@
     "update": "update.bat"
   },
   "dependencies": {
+    "mqtt": "^5.16.1",
     "socket.io-client": "^4.8.4"
   },
   "devDependencies": {

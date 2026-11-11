@@ -21,8 +21,8 @@ class Database {
         secretKey: 'mbuh',
         theme: 'it-dark',
         soundEnabled: true,
-        connectionMode: 'server',
-        serverUrl: 'http://localhost:3000',
+        connectionMode: 'cloud',
+        serverUrl: 'http://192.168.18.50:3000',
         stealthOpacity: 0.15
       }
     };

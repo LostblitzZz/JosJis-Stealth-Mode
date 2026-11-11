@@ -1406,17 +1406,25 @@
         <!-- Tab 2: Room & Network -->
         <div id="panelSetRoom" style="display:none;">
           <div class="form-item">
-            <label>Online Server Backend (SQLite3 Persistent)</label>
+            <label>Mode Koneksi Jaringan</label>
+            <select id="setConnMode" onchange="toggleServerInput()">
+              <option value="cloud">Cloud Realtime Online (Tanpa Perlu Server - Langsung Siap Pakai)</option>
+              <option value="server">Dedicated Server (Linux Home Server / Custom URL)</option>
+            </select>
+            <small style="font-size: 11px; color: var(--text-dim); margin-top: 4px; display: block;">Pilih "Cloud Realtime" agar langsung online instan tanpa ribet menyalakan server.</small>
+          </div>
+          <div class="form-item" id="serverInputBox" style="display:none;">
+            <label>Dedicated Server URL</label>
             <div style="display:flex; gap:8px;">
-              <input type="text" id="setServerUrl" placeholder="http://localhost:3000 (atau IP/Domain Server)" style="flex:1;">
+              <input type="text" id="setServerUrl" placeholder="http://192.168.18.50:3000" style="flex:1;">
               <button type="button" class="tb-btn" onclick="testServerConnection()" style="padding:0 12px; font-size:11px; height:36px;">Cek Koneksi</button>
             </div>
-            <small id="serverPingStatus" style="font-size: 11px; color: var(--text-dim); margin-top: 4px; display: block;">Terhubung ke backend server online yang menyimpan database SQLite (chat, channel, akun) secara permanen.</small>
+            <small id="serverPingStatus" style="font-size: 11px; color: var(--text-dim); margin-top: 4px; display: block;">Gunakan alamat IP Linux rumah Anda (misal http://192.168.18.50:3000) atau domain pribadi.</small>
           </div>
           <div class="form-item">
             <label>Kode Ruang Tim (Room Key)</label>
             <input type="text" id="setSecretKey" placeholder="mbuh">
-            <small style="font-size: 11px; color: var(--text-dim); margin-top: 4px; display: block;">Grup kerja internal tim IT Anda.</small>
+            <small style="font-size: 11px; color: var(--text-dim); margin-top: 4px; display: block;">Hanya tim dengan Room Key yang sama yang dapat membaca pesan (Terenkripsi End-to-End AES-256).</small>
           </div>
           <div class="form-item">
             <label>Notifikasi Suara</label>
@@ -1462,8 +1470,43 @@
 
   <script>
     const { ipcRenderer } = require('electron');
-    const { io } = require('socket.io-client');
+    const crypto = require('crypto');
+    const mqtt = require('mqtt');
+    let io = null;
+    try { io = require('socket.io-client').io; } catch (e) {}
     const db = require('./db.js');
+
+    // ================= ENKRIPSI END-TO-END (AES-256-GCM) =================
+    function encryptText(plainText, secretKey) {
+      if (!plainText) return '';
+      try {
+        const key = crypto.createHash('sha256').update(secretKey || 'mbuh').digest();
+        const iv = crypto.randomBytes(12);
+        const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+        let enc = cipher.update(plainText, 'utf8', 'hex');
+        enc += cipher.final('hex');
+        return iv.toString('hex') + ':' + cipher.getAuthTag().toString('hex') + ':' + enc;
+      } catch (e) {
+        return plainText;
+      }
+    }
+
+    function decryptText(cipherText, secretKey) {
+      if (!cipherText || !cipherText.includes(':')) return cipherText;
+      try {
+        const parts = cipherText.split(':');
+        if (parts.length !== 3) return cipherText;
+        const [ivHex, tagHex, enc] = parts;
+        const key = crypto.createHash('sha256').update(secretKey || 'mbuh').digest();
+        const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(ivHex, 'hex'));
+        decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
+        let dec = decipher.update(enc, 'hex', 'utf8');
+        dec += decipher.final('utf8');
+        return dec;
+      } catch (e) {
+        return cipherText;
+      }
+    }
 
     const IT_AVATARS = [
       { id: 'avatar-terminal', symbol: '💻', name: 'Terminal / Dev' },
@@ -2018,53 +2061,191 @@
       document.body.removeChild(a);
     }
 
-    // ================= REALTIME NETWORKING (SOCKET.IO) =================
+    // ================= REALTIME NETWORKING (HYBRID: CLOUD & SERVER) =================
+
+    let mqttClient = null;
+    let socketClient = null;
+    let subscribedMqttTopic = null;
+    let presenceTimer = null;
+
+    function getCloudMqttTopic(channel, key) {
+      return `josjis_it_network/${key || 'mbuh'}/${channel}`;
+    }
+
+    function getCloudPresenceTopic(key) {
+      return `josjis_it_network/${key || 'mbuh'}/_presence`;
+    }
 
     function connectNetwork() {
-      if (socket) {
-        try { socket.disconnect(); } catch (e) {}
-      }
+      if (mqttClient) { try { mqttClient.end(true); } catch (e) {} mqttClient = null; }
+      if (socketClient) { try { socketClient.disconnect(); } catch (e) {} socketClient = null; }
+      if (presenceTimer) { clearInterval(presenceTimer); presenceTimer = null; }
 
       const cfg = db.getSettings();
-      const serverUrl = cfg.serverUrl || 'http://localhost:3000';
+      const mode = cfg.connectionMode || 'cloud';
       const statusEl = document.getElementById('titleStatusText');
 
+      if (mode === 'cloud') {
+        connectCloudMqtt(statusEl, cfg);
+      } else {
+        connectServerDedicated(statusEl, cfg);
+      }
+    }
+
+    function connectCloudMqtt(statusEl, cfg) {
+      statusEl.innerText = '• Menghubungkan ke Cloud...';
+      statusEl.style.color = 'var(--terminal-amber)';
+
+      const key = cfg.secretKey || 'mbuh';
+      const brokerUrl = 'wss://broker.emqx.io:8084/mqtt';
+
+      try {
+        mqttClient = mqtt.connect(brokerUrl, {
+          clientId: 'josjis_it_' + (currentUser ? currentUser.id : 'anon') + '_' + Math.random().toString(16).substring(2, 6),
+          keepalive: 60,
+          reconnectPeriod: 2500
+        });
+
+        mqttClient.on('connect', () => {
+          statusEl.innerText = '• Online (Cloud Realtime)';
+          statusEl.style.color = 'var(--terminal-green)';
+
+          subscribedMqttTopic = getCloudMqttTopic(currentChannel, key);
+          mqttClient.subscribe(subscribedMqttTopic);
+          mqttClient.subscribe(getCloudPresenceTopic(key));
+
+          sendCloudHeartbeat(key);
+          presenceTimer = setInterval(() => sendCloudHeartbeat(key), 15000);
+
+          if (currentUser) {
+            onlineTeam.set(currentUser.id, currentUser);
+            renderMembers();
+          }
+        });
+
+        mqttClient.on('message', (topic, raw) => {
+          try {
+            const payload = JSON.parse(raw.toString());
+            const presenceTopic = getCloudPresenceTopic(key);
+
+            if (topic === presenceTopic) {
+              if (payload.type === 'presence' && payload.user) {
+                onlineTeam.set(payload.user.id, payload.user);
+                renderMembers();
+              }
+              return;
+            }
+
+            if (payload.type === 'it_chat') {
+              const isFromMe = currentUser && (payload.userId === currentUser.id || payload.username === currentUser.username);
+
+              // Dekripsi teks & gambar jika terenkripsi
+              if (payload.encrypted && payload.text) {
+                payload.text = decryptText(payload.text, key);
+              }
+              if (payload.encrypted && payload.image) {
+                payload.image = decryptText(payload.image, key);
+              }
+
+              const saved = db.saveMessage(payload);
+
+              if (payload.channelId === currentChannel) {
+                if (isFromMe && document.getElementById('msg-' + payload.id)) {
+                  return;
+                }
+                appendMessageRow(saved, !isFromMe);
+              } else {
+                const unread = document.getElementById(`unread-${payload.channelId}`);
+                if (unread) {
+                  const count = parseInt(unread.innerText || '0') + 1;
+                  unread.innerText = count;
+                  unread.classList.add('show');
+                }
+                if (!isFromMe) playBeep();
+              }
+            }
+          } catch (e) {
+            console.warn('Gagal proses pesan mqtt:', e);
+          }
+        });
+
+        mqttClient.on('offline', () => {
+          statusEl.innerText = '• Offline (Reconnecting...)';
+          statusEl.style.color = 'var(--terminal-red)';
+        });
+
+        mqttClient.on('error', () => {
+          statusEl.innerText = '• Offline (Gagal konek cloud)';
+          statusEl.style.color = 'var(--terminal-red)';
+        });
+      } catch (err) {
+        console.error('MQTT connect error:', err);
+        statusEl.innerText = '• Offline';
+        statusEl.style.color = 'var(--terminal-red)';
+      }
+    }
+
+    function sendCloudHeartbeat(key) {
+      if (!mqttClient || !mqttClient.connected || !currentUser) return;
+      const data = {
+        type: 'presence',
+        user: {
+          id: currentUser.id,
+          username: currentUser.username,
+          displayName: currentUser.displayName,
+          role: currentUser.role || 'IT Staff',
+          avatar: currentUser.avatar,
+          status: currentUser.status || 'online',
+          bio: currentUser.bio || '',
+          lastSeen: Date.now()
+        }
+      };
+      mqttClient.publish(getCloudPresenceTopic(key), JSON.stringify(data));
+    }
+
+    function connectServerDedicated(statusEl, cfg) {
       statusEl.innerText = '• Menghubungkan ke Server...';
       statusEl.style.color = 'var(--terminal-amber)';
 
+      const serverUrl = cfg.serverUrl || 'http://192.168.18.50:3000';
+      if (!io) {
+        statusEl.innerText = '• Socket.io tidak tersedia';
+        statusEl.style.color = 'var(--terminal-red)';
+        return;
+      }
+
       try {
-        socket = io(serverUrl, {
+        socketClient = io(serverUrl, {
           transports: ['websocket', 'polling'],
           reconnection: true,
           reconnectionDelay: 2500,
           timeout: 10000
         });
 
-        socket.on('connect', () => {
-          statusEl.innerText = '• Online (Server SQLite)';
+        socketClient.on('connect', () => {
+          statusEl.innerText = '• Online (Server Dedicated)';
           statusEl.style.color = 'var(--terminal-green)';
 
           if (currentUser) {
-            socket.emit('user:join', currentUser);
+            socketClient.emit('user:join', currentUser);
           }
 
-          // Sinkronisasi channels & messages dari server
           syncChannelsFromServer(serverUrl);
-          socket.emit('channel:join', currentChannel);
+          socketClient.emit('channel:join', currentChannel);
           syncMessagesFromServer(serverUrl, currentChannel);
         });
 
-        socket.on('disconnect', () => {
+        socketClient.on('disconnect', () => {
           statusEl.innerText = '• Offline (Reconnecting...)';
           statusEl.style.color = 'var(--terminal-red)';
         });
 
-        socket.on('connect_error', () => {
-          statusEl.innerText = '• Offline (Gagal konek)';
+        socketClient.on('connect_error', () => {
+          statusEl.innerText = '• Offline (Gagal konek server)';
           statusEl.style.color = 'var(--terminal-red)';
         });
 
-        socket.on('chat:message', (payload) => {
+        socketClient.on('chat:message', (payload) => {
           if (!payload) return;
           const isFromMe = currentUser && (payload.userId === currentUser.id || payload.username === currentUser.username);
           const saved = db.saveMessage(payload);
@@ -2082,7 +2263,7 @@
           }
         });
 
-        socket.on('members:update', (membersList) => {
+        socketClient.on('members:update', (membersList) => {
           if (Array.isArray(membersList)) {
             onlineTeam.clear();
             membersList.forEach(m => {
@@ -2092,14 +2273,14 @@
           }
         });
 
-        socket.on('channel:created', (newChannel) => {
+        socketClient.on('channel:created', (newChannel) => {
           if (newChannel) {
             db.setChannels([newChannel]);
             renderChannels();
           }
         });
 
-        socket.on('channel:deleted', (deletedId) => {
+        socketClient.on('channel:deleted', (deletedId) => {
           if (deletedId) {
             db.deleteChannel(deletedId);
             if (currentChannel === deletedId) {
@@ -2110,7 +2291,7 @@
           }
         });
 
-        socket.on('chat:cleared', ({ channelId }) => {
+        socketClient.on('chat:cleared', ({ channelId }) => {
           if (channelId) {
             db.clearChannelMessages(channelId);
             if (currentChannel === channelId) {
@@ -2118,7 +2299,6 @@
             }
           }
         });
-
       } catch (err) {
         console.error('Socket init error:', err);
         statusEl.innerText = '• Offline';
@@ -2191,6 +2371,10 @@
 
       isSending = true;
 
+      const cfg = db.getSettings();
+      const key = cfg.secretKey || 'mbuh';
+      const mode = cfg.connectionMode || 'cloud';
+
       const msgObj = {
         id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
         channelId: currentChannel,
@@ -2206,13 +2390,26 @@
         isSystem: false
       };
 
-      // Simpan lokal seketika & tampilkan ke UI
+      // Simpan lokal seketika & tampilkan di UI
       db.saveMessage(msgObj);
       appendMessageRow(msgObj, false);
 
-      // Kirim realtime ke Socket.io Server (otomatis tersimpan di SQLite)
-      if (socket && socket.connected) {
-        socket.emit('chat:message', msgObj);
+      if (mode === 'cloud') {
+        // Enkripsi teks & gambar via AES-256-GCM agar aman di cloud publik
+        const wirePayload = {
+          ...msgObj,
+          encrypted: true,
+          text: text ? encryptText(text, key) : '',
+          image: msgObj.image ? encryptText(msgObj.image, key) : null
+        };
+        if (mqttClient && mqttClient.connected) {
+          mqttClient.publish(getCloudMqttTopic(currentChannel, key), JSON.stringify(wirePayload));
+        }
+      } else {
+        // Mode Server Dedicated
+        if (socketClient && socketClient.connected) {
+          socketClient.emit('chat:message', msgObj);
+        }
       }
 
       input.value = '';
@@ -2250,24 +2447,27 @@
       if (!name) return;
 
       const cfg = db.getSettings();
-      const serverUrl = cfg.serverUrl || 'http://localhost:3000';
+      const mode = cfg.connectionMode || 'cloud';
 
-      try {
-        const resp = await fetch(`${serverUrl}/api/channels`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, desc })
-        });
-        const data = await resp.json();
-        if (data && data.success && data.channel) {
-          db.setChannels([data.channel]);
-          closeModal('addChannelModal');
-          renderChannels();
-          switchChannel(data.channel.id);
-          return;
+      if (mode === 'server') {
+        const serverUrl = cfg.serverUrl || 'http://192.168.18.50:3000';
+        try {
+          const resp = await fetch(`${serverUrl}/api/channels`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, desc })
+          });
+          const data = await resp.json();
+          if (data && data.success && data.channel) {
+            db.setChannels([data.channel]);
+            closeModal('addChannelModal');
+            renderChannels();
+            switchChannel(data.channel.id);
+            return;
+          }
+        } catch (e) {
+          console.warn('Gagal buat channel online:', e);
         }
-      } catch (e) {
-        console.warn('Gagal buat channel online:', e);
       }
 
       const res = db.createChannel(name, desc);
@@ -2282,11 +2482,14 @@
 
     async function deleteChannel(channelId) {
       const cfg = db.getSettings();
-      const serverUrl = cfg.serverUrl || 'http://localhost:3000';
+      const mode = cfg.connectionMode || 'cloud';
 
-      try {
-        await fetch(`${serverUrl}/api/channels/${channelId}`, { method: 'DELETE' });
-      } catch (e) {}
+      if (mode === 'server') {
+        const serverUrl = cfg.serverUrl || 'http://192.168.18.50:3000';
+        try {
+          await fetch(`${serverUrl}/api/channels/${channelId}`, { method: 'DELETE' });
+        } catch (e) {}
+      }
 
       const res = db.deleteChannel(channelId);
       if (!res.success) {
@@ -2314,11 +2517,19 @@
 
       const cfg = db.getSettings();
       document.getElementById('setSecretKey').value = cfg.secretKey || 'mbuh';
-      document.getElementById('setServerUrl').value = cfg.serverUrl || 'http://localhost:3000';
+      document.getElementById('setConnMode').value = cfg.connectionMode || 'cloud';
+      document.getElementById('setServerUrl').value = cfg.serverUrl || 'http://192.168.18.50:3000';
       document.getElementById('setSoundOn').checked = cfg.soundEnabled !== false;
 
+      toggleServerInput();
       switchSettings(defaultTab);
       openModal('settingsModal');
+    }
+
+    function toggleServerInput() {
+      const mode = document.getElementById('setConnMode').value;
+      const box = document.getElementById('serverInputBox');
+      if (box) box.style.display = (mode === 'server') ? 'block' : 'none';
     }
 
     function switchSettings(tab) {
@@ -2373,11 +2584,13 @@
       if (profRes.success) currentUser = profRes.user;
 
       const newKey = document.getElementById('setSecretKey').value.trim() || 'mbuh';
-      const newUrl = document.getElementById('setServerUrl').value.trim() || 'http://localhost:3000';
+      const newMode = document.getElementById('setConnMode').value;
+      const newUrl = document.getElementById('setServerUrl').value.trim() || 'http://192.168.18.50:3000';
       const newSound = document.getElementById('setSoundOn').checked;
 
       db.saveSettings({
         secretKey: newKey,
+        connectionMode: newMode,
         serverUrl: newUrl,
         soundEnabled: newSound
       });

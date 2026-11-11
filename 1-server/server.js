@@ -45,6 +45,16 @@ function sanitizeUser(user) {
 
 // ================= REST API ROUTES =================
 
+// 0. Root
+app.get('/', (req, res) => {
+  res.json({
+    status: 'online',
+    name: 'JOSJIS IT TEAM Central Server',
+    version: '2.2.0',
+    database: 'SQLite3 (Persistent)'
+  });
+});
+
 // 1. Health check
 app.get('/api/status', async (req, res) => {
   try {
