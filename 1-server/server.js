@@ -8,6 +8,8 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const crypto = require('crypto');
+const path = require('path');
+const fs = require('fs');
 const db = require('./database');
 
 const app = express();
@@ -47,12 +49,69 @@ function sanitizeUser(user) {
 
 // 0. Root
 app.get('/', (req, res) => {
+  const exePath = path.join(__dirname, '../2-client-user/dist/josjis.exe');
+  const exeAvailable = fs.existsSync(exePath);
+  let exeSize = 0;
+  if (exeAvailable) {
+    try {
+      exeSize = (fs.statSync(exePath).size / (1024 * 1024)).toFixed(1);
+    } catch (_) {}
+  }
+
+  if (req.accepts('html')) {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.send(`<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JOSJIS IT TEAM - Central Server</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0a0e14; color: #d3c6aa; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+    .card { background: #151b23; border: 1px solid #30363d; border-radius: 12px; padding: 36px 32px; max-width: 480px; width: 90%; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+    h1 { color: #a7c080; margin: 12px 0 6px 0; font-size: 24px; letter-spacing: 0.5px; }
+    p { color: #859289; font-size: 14px; margin-bottom: 26px; }
+    .badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: bold; background: rgba(167, 192, 128, 0.15); color: #a7c080; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: #a7c080; color: #151b23; text-decoration: none; font-weight: bold; padding: 13px 28px; border-radius: 8px; font-size: 15px; transition: all 0.2s; box-shadow: 0 4px 12px rgba(167, 192, 128, 0.3); }
+    .btn:hover { background: #83c092; transform: translateY(-2px); box-shadow: 0 6px 16px rgba(167, 192, 128, 0.4); }
+    .meta { font-size: 12px; color: #7fbbb3; margin-top: 14px; }
+    .db-badge { font-size: 11px; color: #9da9a0; margin-top: 20px; border-top: 1px solid #21262d; padding-top: 14px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">● SERVER ONLINE &amp; WAL PERSISTENT</div>
+    <h1>JOSJIS IT TEAM</h1>
+    <p>Central Synchronization &amp; Stealth Ops Network</p>
+    ${exeAvailable ? `
+      <a class="btn" href="/download/josjis.exe">⬇️ Download josjis.exe (${exeSize} MB)</a>
+      <div class="meta">Executable Windows Portable versi terbaru</div>
+    ` : `
+      <div class="meta" style="color: #e67e80;">Executable belum di-build</div>
+    `}
+    <div class="db-badge">Database: SQLite3 WAL Mode | Realtime: Socket.io + Cloud MQTT</div>
+  </div>
+</body>
+</html>`);
+  }
+
   res.json({
     status: 'online',
     name: 'JOSJIS IT TEAM Central Server',
     version: '2.2.0',
-    database: 'SQLite3 (Persistent)'
+    database: 'SQLite3 (Persistent)',
+    downloadExe: exeAvailable ? '/download/josjis.exe' : null
   });
+});
+
+// Download latest Windows portable executable
+app.get('/download/josjis.exe', (req, res) => {
+  const exePath = path.join(__dirname, '../2-client-user/dist/josjis.exe');
+  if (fs.existsSync(exePath)) {
+    res.download(exePath, 'josjis.exe');
+  } else {
+    res.status(404).json({ error: 'Executable not found. Please compile client first.' });
+  }
 });
 
 // 1. Health check
