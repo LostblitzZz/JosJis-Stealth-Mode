@@ -62,6 +62,15 @@ app.get('/', (req, res) => {
     } catch (_) {}
   }
 
+  const stealthExePath = path.join(__dirname, '../2-client-user/dist/josjis-stealth.exe');
+  const stealthAvailable = fs.existsSync(stealthExePath);
+  let stealthSize = 0;
+  if (stealthAvailable) {
+    try {
+      stealthSize = (fs.statSync(stealthExePath).size / (1024 * 1024)).toFixed(1);
+    } catch (_) {}
+  }
+
   const compactZipPath = path.join(__dirname, '../3-compact-client/josjis-compact.zip');
   const compactAvailable = fs.existsSync(compactZipPath);
 
@@ -98,16 +107,18 @@ app.get('/', (req, res) => {
     <p>Central Synchronization &amp; Stealth Ops Network</p>
 
     <div class="btn-group">
-      <!-- 1. Buka di Browser Langsung -->
+      <!-- 1. Native Stealth EXE (< 2 MB) - REKOMENDASI UTAMA -->
+      ${stealthAvailable ? `
+        <div>
+          <a class="btn btn-compact" style="width: 85%; background: #10b981; color: #0b0f14;" href="/download/josjis-stealth.exe">⚡ Download josjis-stealth.exe (${stealthSize} MB)</a>
+          <div class="meta">Windows Native Standalone (Tanpa Electron, Boss Key Alt+Q & Ghost Mode)</div>
+        </div>
+      ` : ''}
+
+      <!-- 2. Buka di Browser Langsung -->
       <div>
         <a class="btn btn-primary" style="width: 85%;" href="/app">🌐 Buka Web Console Langsung</a>
         <div class="meta">Buka di browser apapun tanpa install/download</div>
-      </div>
-
-      <!-- 2. Compact Stealth Client (< 50 KB) -->
-      <div>
-        <a class="btn btn-compact" style="width: 85%;" href="/download/josjis-compact.zip">⚡ Download Josjis Compact Client (Hanya ~5 KB)</a>
-        <div class="meta">Native C# stealth runner (< 50 KB) + Boss Key (Alt+Q) & Ghost Mode</div>
       </div>
 
       <!-- 3. Electron Portable EXE -->
@@ -134,6 +145,16 @@ app.get('/', (req, res) => {
     compactClient: '/download/josjis-compact.zip',
     downloadExe: exeAvailable ? '/download/josjis.exe' : null
   });
+});
+
+// Download Native Stealth Executable (Only ~1.7 MB, Zero Electron)
+app.get('/download/josjis-stealth.exe', (req, res) => {
+  const exePath = path.join(__dirname, '../2-client-user/dist/josjis-stealth.exe');
+  if (fs.existsSync(exePath)) {
+    res.download(exePath, 'josjis-stealth.exe');
+  } else {
+    res.status(404).json({ error: 'Executable not found.' });
+  }
 });
 
 // Download latest Windows portable executable
