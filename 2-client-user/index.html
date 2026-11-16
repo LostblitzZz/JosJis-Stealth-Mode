@@ -42,9 +42,12 @@
       display: flex;
       flex-direction: column;
       overflow: hidden;
-      user-select: none;
       transition: opacity 0.2s ease, border-color 0.2s ease;
       border: 1px solid var(--border);
+    }
+
+    input, select, textarea, button {
+      pointer-events: auto !important;
     }
 
     /* Stealth / Ghost Mode */
@@ -905,13 +908,21 @@
     .auth-tab-btn {
       flex: 1;
       text-align: center;
-      padding: 8px;
-      font-size: 12px;
+      padding: 10px 8px;
+      font-size: 13px;
       font-weight: 700;
       color: var(--text-muted);
       cursor: pointer;
+      border: none;
+      background: transparent;
       border-bottom: 2px solid transparent;
       font-family: var(--font-code);
+      pointer-events: auto !important;
+      outline: none;
+      transition: color 0.15s ease, border-color 0.15s ease;
+    }
+    .auth-tab-btn:hover {
+      color: var(--text-main);
     }
     .auth-tab-btn.active {
       color: var(--accent);
@@ -1266,8 +1277,8 @@
       </div>
 
       <div class="auth-nav-tabs">
-        <div class="auth-tab-btn active" id="btnTabLogin" onclick="switchAuth('login')">Masuk (Login)</div>
-        <div class="auth-tab-btn" id="btnTabRegister" onclick="switchAuth('register')">Daftar Anggota Baru</div>
+        <button type="button" class="auth-tab-btn active" id="btnTabLogin" onclick="switchAuth('login')">Masuk (Login)</button>
+        <button type="button" class="auth-tab-btn" id="btnTabRegister" onclick="switchAuth('register')">Daftar Anggota Baru</button>
       </div>
 
       <div class="auth-alert" id="authErrorAlert">Pesan error</div>
@@ -1641,6 +1652,11 @@
           }
         }
       });
+
+      const bLog = document.getElementById('btnTabLogin');
+      const bReg = document.getElementById('btnTabRegister');
+      if (bLog) bLog.onclick = (e) => { e.preventDefault(); switchAuth('login'); };
+      if (bReg) bReg.onclick = (e) => { e.preventDefault(); switchAuth('register'); };
     });
 
     function showAuth() {
@@ -1653,10 +1669,16 @@
     }
 
     function switchAuth(tab) {
-      document.getElementById('btnTabLogin').classList.toggle('active', tab === 'login');
-      document.getElementById('btnTabRegister').classList.toggle('active', tab === 'register');
-      document.getElementById('formLogin').style.display = tab === 'login' ? 'block' : 'none';
-      document.getElementById('formRegister').style.display = tab === 'register' ? 'block' : 'none';
+      const isLogin = (tab === 'login');
+      const btnLog = document.getElementById('btnTabLogin');
+      const btnReg = document.getElementById('btnTabRegister');
+      const formLog = document.getElementById('formLogin');
+      const formReg = document.getElementById('formRegister');
+
+      if (btnLog) btnLog.classList.toggle('active', isLogin);
+      if (btnReg) btnReg.classList.toggle('active', !isLogin);
+      if (formLog) formLog.style.display = isLogin ? 'block' : 'none';
+      if (formReg) formReg.style.display = isLogin ? 'none' : 'block';
       hideAuthAlert();
     }
 

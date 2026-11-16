@@ -19,9 +19,6 @@ use wry::{WebContext, WebViewBuilder};
 type HWND = *mut c_void;
 type BOOL = i32;
 
-const GWL_EXSTYLE: i32 = -20;
-const WS_EX_LAYERED: isize = 0x80000;
-const LWA_ALPHA: u32 = 0x2;
 const SW_HIDE: i32 = 0;
 const SW_SHOW: i32 = 5;
 const SW_MINIMIZE: i32 = 6;
@@ -30,29 +27,8 @@ const VK_ESCAPE: i32 = 0x1B;
 const VK_Q: i32 = 0x51;
 const VK_MENU: i32 = 0x12; // Alt key
 
-#[repr(C)]
-#[derive(Default, Copy, Clone)]
-struct POINT {
-    x: i32,
-    y: i32,
-}
-
-#[repr(C)]
-#[derive(Default, Copy, Clone)]
-struct RECT {
-    left: i32,
-    top: i32,
-    right: i32,
-    bottom: i32,
-}
-
 #[link(name = "user32")]
 extern "system" {
-    fn GetCursorPos(lpPoint: *mut POINT) -> BOOL;
-    fn GetWindowRect(hWnd: HWND, lpRect: *mut RECT) -> BOOL;
-    fn GetWindowLongPtrW(hWnd: HWND, nIndex: i32) -> isize;
-    fn SetWindowLongPtrW(hWnd: HWND, nIndex: i32, dwNewLong: isize) -> isize;
-    fn SetLayeredWindowAttributes(hwnd: HWND, crKey: u32, bAlpha: u8, dwFlags: u32) -> BOOL;
     fn ShowWindow(hWnd: HWND, nCmdShow: i32) -> BOOL;
     fn SetForegroundWindow(hWnd: HWND) -> BOOL;
     fn GetAsyncKeyState(vKey: i32) -> i16;
@@ -77,7 +53,6 @@ fn toggle_boss_key() {
             ShowWindow(hwnd, SW_SHOW);
             ShowWindow(hwnd, SW_RESTORE);
             SetForegroundWindow(hwnd);
-            SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
             IS_HIDDEN.store(false, Ordering::SeqCst);
         }
     }
@@ -113,13 +88,6 @@ fn main() {
     let hwnd = window.hwnd() as HWND;
     APP_HWND.store(hwnd as isize, Ordering::SeqCst);
 
-    // Initialize Win32 Layered Window for Stealth Ghost Dimming
-    unsafe {
-        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED);
-        SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
-    }
-
     // Isolated persistent storage for native client
     let local_data = env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".to_string());
     let data_dir = PathBuf::from(local_data).join("JosjisStealthNativeProfile");
@@ -131,21 +99,19 @@ fn main() {
         .build(&window)
         .expect("Failed to initialize embedded native WebView2");
 
-    // Stealth Ops Thread (Boss Key Alt+Q, Panic Key Esc, Ghost Auto-Opacity)
+    // Stealth Hotkey Background Monitor (Boss Key Alt+Q & Panic Key Esc)
     thread::spawn(|| {
-        let mut current_alpha: u8 = 255;
-        let mut outside_counter = 0;
         let mut boss_key_debounced = false;
 
         while IS_RUNNING.load(Ordering::SeqCst) {
-            thread::sleep(Duration::from_millis(40));
+            thread::sleep(Duration::from_millis(60));
 
             let hwnd = APP_HWND.load(Ordering::SeqCst) as HWND;
             if hwnd.is_null() {
                 continue;
             }
 
-            // 1. Boss Key Global Hotkey (Alt + Q)
+            // 1. Global Boss Key Hotkey: Alt + Q (Instant Vanish)
             unsafe {
                 let alt_pressed = (GetAsyncKeyState(VK_MENU) as i32 & 0x8000) != 0;
                 let q_pressed = (GetAsyncKeyState(VK_Q) as i32 & 0x8000) != 0;
@@ -160,51 +126,15 @@ fn main() {
                 }
             }
 
-            // If hidden by Boss Key, skip ghost opacity updates
-            if IS_HIDDEN.load(Ordering::SeqCst) {
-                continue;
-            }
-
-            // 2. Panic Key (Esc) when window is in focus
-            unsafe {
-                let esc = GetAsyncKeyState(VK_ESCAPE);
-                if (esc as i32 & 0x8000) != 0 {
-                    let fg = GetForegroundWindow();
-                    if fg == hwnd {
-                        ShowWindow(hwnd, SW_MINIMIZE);
-                        thread::sleep(Duration::from_millis(250));
-                        continue;
-                    }
-                }
-            }
-
-            // 3. Ghost Mode: Auto-Opacity Dimming on Mouse Exit
-            let mut pt = POINT::default();
-            let mut rect = RECT::default();
-            unsafe {
-                GetCursorPos(&mut pt);
-                GetWindowRect(hwnd, &mut rect);
-            }
-
-            let is_inside = pt.x >= rect.left && pt.x <= rect.right && pt.y >= rect.top && pt.y <= rect.bottom;
-            let idle_alpha: u8 = 36; // ~14% stealth opacity
-
-            if is_inside {
-                outside_counter = 0;
-                if current_alpha < 255 {
-                    current_alpha = current_alpha.saturating_add(60);
-                    unsafe {
-                        SetLayeredWindowAttributes(hwnd, 0, current_alpha, LWA_ALPHA);
-                    }
-                }
-            } else {
-                outside_counter += 1;
-                // Grace period: ~160ms before starting fade
-                if outside_counter > 4 {
-                    if current_alpha > idle_alpha {
-                        current_alpha = current_alpha.saturating_sub(25).max(idle_alpha);
-                        unsafe {
-                            SetLayeredWindowAttributes(hwnd, 0, current_alpha, LWA_ALPHA);
+            // 2. Panic Key: Esc (Minimize window immediately when active)
+            if !IS_HIDDEN.load(Ordering::SeqCst) {
+                unsafe {
+                    let esc = GetAsyncKeyState(VK_ESCAPE);
+                    if (esc as i32 & 0x8000) != 0 {
+                        let fg = GetForegroundWindow();
+                        if fg == hwnd {
+                            ShowWindow(hwnd, SW_MINIMIZE);
+                            thread::sleep(Duration::from_millis(300));
                         }
                     }
                 }
