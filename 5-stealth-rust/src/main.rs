@@ -2,11 +2,19 @@
 
 use std::env;
 use std::ffi::c_void;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::thread;
 use std::time::Duration;
+
+use tao::{
+    dpi::LogicalSize,
+    event::{Event, WindowEvent},
+    event_loop::{ControlFlow, EventLoop},
+    platform::windows::WindowExtWindows,
+    window::WindowBuilder,
+};
+use wry::{WebContext, WebViewBuilder};
 
 type HWND = *mut c_void;
 type BOOL = i32;
@@ -19,10 +27,8 @@ const SW_SHOW: i32 = 5;
 const SW_MINIMIZE: i32 = 6;
 const SW_RESTORE: i32 = 9;
 const VK_ESCAPE: i32 = 0x1B;
-const VK_Q: u32 = 0x51;
-const MOD_ALT: u32 = 0x0001;
-const WM_HOTKEY: u32 = 0x0312;
-const HOTKEY_BOSS_KEY: i32 = 9001;
+const VK_Q: i32 = 0x51;
+const VK_MENU: i32 = 0x12; // Alt key
 
 #[repr(C)]
 #[derive(Default, Copy, Clone)]
@@ -40,23 +46,8 @@ struct RECT {
     bottom: i32,
 }
 
-#[repr(C)]
-struct MSG {
-    hwnd: HWND,
-    message: u32,
-    w_param: usize,
-    l_param: isize,
-    time: u32,
-    pt: POINT,
-}
-
 #[link(name = "user32")]
 extern "system" {
-    fn RegisterHotKey(hWnd: HWND, id: i32, fsModifiers: u32, vk: u32) -> BOOL;
-    fn UnregisterHotKey(hWnd: HWND, id: i32) -> BOOL;
-    fn GetMessageW(lpMsg: *mut MSG, hWnd: HWND, wMsgFilterMin: u32, wMsgFilterMax: u32) -> BOOL;
-    fn TranslateMessage(lpMsg: *const MSG) -> BOOL;
-    fn DispatchMessageW(lpMsg: *const MSG) -> isize;
     fn GetCursorPos(lpPoint: *mut POINT) -> BOOL;
     fn GetWindowRect(hWnd: HWND, lpRect: *mut RECT) -> BOOL;
     fn GetWindowLongPtrW(hWnd: HWND, nIndex: i32) -> isize;
@@ -66,26 +57,11 @@ extern "system" {
     fn SetForegroundWindow(hWnd: HWND) -> BOOL;
     fn GetAsyncKeyState(vKey: i32) -> i16;
     fn GetForegroundWindow() -> HWND;
-    fn IsWindowVisible(hWnd: HWND) -> BOOL;
-    fn EnumWindows(lpEnumFunc: extern "system" fn(HWND, isize) -> BOOL, lParam: isize) -> BOOL;
-    fn GetWindowThreadProcessId(hWnd: HWND, lpdwProcessId: *mut u32) -> u32;
 }
 
 static APP_HWND: AtomicIsize = AtomicIsize::new(0);
-static APP_PID: AtomicU32 = AtomicU32::new(0);
 static IS_HIDDEN: AtomicBool = AtomicBool::new(false);
-
-extern "system" fn enum_windows_callback(hwnd: HWND, _lparam: isize) -> BOOL {
-    unsafe {
-        let mut pid: u32 = 0;
-        GetWindowThreadProcessId(hwnd, &mut pid);
-        if pid == APP_PID.load(Ordering::SeqCst) && IsWindowVisible(hwnd) != 0 {
-            APP_HWND.store(hwnd as isize, Ordering::SeqCst);
-            return 0; // stop enumeration
-        }
-        1 // continue
-    }
-}
+static IS_RUNNING: AtomicBool = AtomicBool::new(true);
 
 fn toggle_boss_key() {
     let hwnd = APP_HWND.load(Ordering::SeqCst) as HWND;
@@ -107,44 +83,10 @@ fn toggle_boss_key() {
     }
 }
 
-fn find_browser() -> PathBuf {
-    let local = env::var_os("LOCALAPPDATA").map(PathBuf::from);
-    let prog = env::var_os("ProgramFiles").map(PathBuf::from);
-    let prog_x86 = env::var_os("ProgramFiles(x86)").map(PathBuf::from);
-
-    let mut candidates = Vec::new();
-
-    if let Some(ref p) = prog_x86 {
-        candidates.push(p.join("Microsoft").join("Edge").join("Application").join("msedge.exe"));
-    }
-    if let Some(ref p) = prog {
-        candidates.push(p.join("Microsoft").join("Edge").join("Application").join("msedge.exe"));
-    }
-    if let Some(ref p) = local {
-        candidates.push(p.join("Microsoft").join("Edge").join("Application").join("msedge.exe"));
-    }
-    if let Some(ref p) = prog {
-        candidates.push(p.join("Google").join("Chrome").join("Application").join("chrome.exe"));
-    }
-    if let Some(ref p) = prog_x86 {
-        candidates.push(p.join("Google").join("Chrome").join("Application").join("chrome.exe"));
-    }
-    if let Some(ref p) = local {
-        candidates.push(p.join("Google").join("Chrome").join("Application").join("chrome.exe"));
-    }
-
-    for c in candidates {
-        if c.exists() {
-            return c;
-        }
-    }
-    PathBuf::from("msedge.exe")
-}
-
 fn main() {
     let mut target_url = String::from("https://destinations-lay-transcript-southeast.trycloudflare.com/app");
 
-    // Optional override via argument or server.txt
+    // Allow override via cli argument or local server.txt
     let args: Vec<String> = env::args().collect();
     if args.len() > 1 && args[1].starts_with("http") {
         target_url = args[1].clone();
@@ -160,72 +102,83 @@ fn main() {
         }
     }
 
-    let browser = find_browser();
-    let local_app_data = env::var("LOCALAPPDATA").unwrap_or_else(|_| String::from("."));
-    let profile_dir = Path::new(&local_app_data).join("JosjisRustProfile");
+    let event_loop = EventLoop::new();
+    let window = WindowBuilder::new()
+        .with_title("JOSJIS IT TEAM - Stealth Native")
+        .with_inner_size(LogicalSize::new(1020.0, 680.0))
+        .with_decorations(true)
+        .build(&event_loop)
+        .expect("Failed to create native desktop window");
 
-    let child = Command::new(&browser)
-        .arg(format!("--app={}", target_url))
-        .arg("--window-size=1020,680")
-        .arg(format!("--user-data-dir={}", profile_dir.display()))
-        .arg("--disable-features=TranslateUI")
-        .arg("--disable-extensions")
-        .arg("--no-first-run")
-        .arg("--no-default-browser-check")
-        .spawn();
+    let hwnd = window.hwnd() as HWND;
+    APP_HWND.store(hwnd as isize, Ordering::SeqCst);
 
-    let child = match child {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-
-    APP_PID.store(child.id(), Ordering::SeqCst);
-
-    // Register Boss Key Hotkey: Alt + Q
+    // Initialize Win32 Layered Window for Stealth Ghost Dimming
     unsafe {
-        RegisterHotKey(std::ptr::null_mut(), HOTKEY_BOSS_KEY, MOD_ALT, VK_Q);
+        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED);
+        SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
     }
 
-    // Stealth Monitor Thread
+    // Isolated persistent storage for native client
+    let local_data = env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".to_string());
+    let data_dir = PathBuf::from(local_data).join("JosjisStealthNativeProfile");
+    let mut web_context = WebContext::new(Some(data_dir));
+
+    let _webview = WebViewBuilder::new_with_web_context(&mut web_context)
+        .with_url(&target_url)
+        .with_devtools(false)
+        .build(&window)
+        .expect("Failed to initialize embedded native WebView2");
+
+    // Stealth Ops Thread (Boss Key Alt+Q, Panic Key Esc, Ghost Auto-Opacity)
     thread::spawn(|| {
         let mut current_alpha: u8 = 255;
         let mut outside_counter = 0;
+        let mut boss_key_debounced = false;
 
-        loop {
-            thread::sleep(Duration::from_millis(45));
+        while IS_RUNNING.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(40));
 
             let hwnd = APP_HWND.load(Ordering::SeqCst) as HWND;
             if hwnd.is_null() {
-                unsafe {
-                    EnumWindows(enum_windows_callback, 0);
-                    let new_hwnd = APP_HWND.load(Ordering::SeqCst) as HWND;
-                    if !new_hwnd.is_null() {
-                        let style = GetWindowLongPtrW(new_hwnd, GWL_EXSTYLE);
-                        SetWindowLongPtrW(new_hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED);
-                        SetLayeredWindowAttributes(new_hwnd, 0, 255, LWA_ALPHA);
-                    }
-                }
                 continue;
             }
 
-            // 1. Panic Key ([Esc])
+            // 1. Boss Key Global Hotkey (Alt + Q)
+            unsafe {
+                let alt_pressed = (GetAsyncKeyState(VK_MENU) as i32 & 0x8000) != 0;
+                let q_pressed = (GetAsyncKeyState(VK_Q) as i32 & 0x8000) != 0;
+
+                if alt_pressed && q_pressed {
+                    if !boss_key_debounced {
+                        boss_key_debounced = true;
+                        toggle_boss_key();
+                    }
+                } else {
+                    boss_key_debounced = false;
+                }
+            }
+
+            // If hidden by Boss Key, skip ghost opacity updates
+            if IS_HIDDEN.load(Ordering::SeqCst) {
+                continue;
+            }
+
+            // 2. Panic Key (Esc) when window is in focus
             unsafe {
                 let esc = GetAsyncKeyState(VK_ESCAPE);
                 if (esc as i32 & 0x8000) != 0 {
                     let fg = GetForegroundWindow();
                     if fg == hwnd {
                         ShowWindow(hwnd, SW_MINIMIZE);
-                        thread::sleep(Duration::from_millis(300));
+                        thread::sleep(Duration::from_millis(250));
                         continue;
                     }
                 }
             }
 
-            // 2. Ghost Mode (Auto-Opacity)
-            if IS_HIDDEN.load(Ordering::SeqCst) {
-                continue;
-            }
-
+            // 3. Ghost Mode: Auto-Opacity Dimming on Mouse Exit
             let mut pt = POINT::default();
             let mut rect = RECT::default();
             unsafe {
@@ -234,21 +187,22 @@ fn main() {
             }
 
             let is_inside = pt.x >= rect.left && pt.x <= rect.right && pt.y >= rect.top && pt.y <= rect.bottom;
-            let idle_alpha: u8 = 38; // ~15% opacity stealth
+            let idle_alpha: u8 = 36; // ~14% stealth opacity
 
             if is_inside {
                 outside_counter = 0;
                 if current_alpha < 255 {
-                    current_alpha = current_alpha.saturating_add(55);
+                    current_alpha = current_alpha.saturating_add(60);
                     unsafe {
                         SetLayeredWindowAttributes(hwnd, 0, current_alpha, LWA_ALPHA);
                     }
                 }
             } else {
                 outside_counter += 1;
-                if outside_counter > 3 {
+                // Grace period: ~160ms before starting fade
+                if outside_counter > 4 {
                     if current_alpha > idle_alpha {
-                        current_alpha = current_alpha.saturating_sub(28).max(idle_alpha);
+                        current_alpha = current_alpha.saturating_sub(25).max(idle_alpha);
                         unsafe {
                             SetLayeredWindowAttributes(hwnd, 0, current_alpha, LWA_ALPHA);
                         }
@@ -258,16 +212,18 @@ fn main() {
         }
     });
 
-    // Win32 Message Loop
-    unsafe {
-        let mut msg: MSG = std::mem::zeroed();
-        while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
-            if msg.message == WM_HOTKEY && msg.w_param == HOTKEY_BOSS_KEY as usize {
-                toggle_boss_key();
+    event_loop.run(move |event, _, control_flow| {
+        *control_flow = ControlFlow::Wait;
+
+        match event {
+            Event::WindowEvent {
+                event: WindowEvent::CloseRequested,
+                ..
+            } => {
+                IS_RUNNING.store(false, Ordering::SeqCst);
+                *control_flow = ControlFlow::Exit;
             }
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
+            _ => (),
         }
-        UnregisterHotKey(std::ptr::null_mut(), HOTKEY_BOSS_KEY);
-    }
+    });
 }
