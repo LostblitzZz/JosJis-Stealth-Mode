@@ -1580,13 +1580,17 @@
       renderAvatarGrid('regAvatarPicker', 'inputRegAvatar');
       renderAvatarGrid('setAvatarPicker', 'setAvatarChoice');
 
-      currentUser = db.getCurrentUser();
-      if (!currentUser) {
-        showAuth();
-      } else {
-        hideAuth();
-        initDashboard();
+      // Keamanan Stealth: Selalu tampilkan portal login saat aplikasi dibuka (JANGAN auto-login)
+      const lastUser = db.getCurrentUser();
+      if (lastUser && lastUser.username) {
+        // Akun tetap tersimpan rapi, otomatis isi username terakhir
+        const userInp = document.getElementById('inputLoginUser');
+        if (userInp) userInp.value = lastUser.username;
+        const passInp = document.getElementById('inputLoginPass');
+        if (passInp) setTimeout(() => passInp.focus(), 150);
       }
+      currentUser = null;
+      showAuth();
 
       // Close Popups when clicking outside
       document.addEventListener('click', (e) => {
