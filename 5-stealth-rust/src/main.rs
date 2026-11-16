@@ -40,6 +40,7 @@ enum UserEvent {
     Maximize,
     Close,
     Drag,
+    ToggleMini,
 }
 
 static APP_HWND: AtomicIsize = AtomicIsize::new(0);
@@ -118,6 +119,8 @@ fn main() {
                 let _ = ipc_proxy.send_event(UserEvent::Close);
             } else if body.contains("drag-window") {
                 let _ = ipc_proxy.send_event(UserEvent::Drag);
+            } else if body.contains("toggle-mini") {
+                let _ = ipc_proxy.send_event(UserEvent::ToggleMini);
             } else if body.contains("hide-window") {
                 toggle_boss_key();
             }
@@ -169,6 +172,7 @@ fn main() {
         }
     });
 
+    let mut is_mini = false;
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
 
@@ -178,6 +182,16 @@ fn main() {
             }
             Event::UserEvent(UserEvent::Maximize) => {
                 window.set_maximized(!window.is_maximized());
+            }
+            Event::UserEvent(UserEvent::ToggleMini) => {
+                is_mini = !is_mini;
+                if is_mini {
+                    window.set_inner_size(LogicalSize::new(360.0, 520.0));
+                    window.set_always_on_top(true);
+                } else {
+                    window.set_inner_size(LogicalSize::new(1020.0, 680.0));
+                    window.set_always_on_top(false);
+                }
             }
             Event::UserEvent(UserEvent::Close) => {
                 IS_RUNNING.store(false, Ordering::SeqCst);
