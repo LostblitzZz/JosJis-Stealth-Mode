@@ -10,7 +10,7 @@ use std::time::Duration;
 use tao::{
     dpi::LogicalSize,
     event::{Event, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
+    event_loop::{ControlFlow, EventLoopBuilder},
     platform::windows::WindowExtWindows,
     window::WindowBuilder,
 };
@@ -21,7 +21,6 @@ type BOOL = i32;
 
 const SW_HIDE: i32 = 0;
 const SW_SHOW: i32 = 5;
-const SW_MINIMIZE: i32 = 6;
 const SW_RESTORE: i32 = 9;
 const VK_ESCAPE: i32 = 0x1B;
 const VK_Q: i32 = 0x51;
@@ -33,6 +32,14 @@ extern "system" {
     fn SetForegroundWindow(hWnd: HWND) -> BOOL;
     fn GetAsyncKeyState(vKey: i32) -> i16;
     fn GetForegroundWindow() -> HWND;
+}
+
+#[derive(Debug)]
+enum UserEvent {
+    Minimize,
+    Maximize,
+    Close,
+    Drag,
 }
 
 static APP_HWND: AtomicIsize = AtomicIsize::new(0);
@@ -77,11 +84,15 @@ fn main() {
         }
     }
 
-    let event_loop = EventLoop::new();
+    let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
+    let proxy = event_loop.create_proxy();
+
+    // Create BORDERLESS frameless stealth window
     let window = WindowBuilder::new()
         .with_title("JOSJIS IT TEAM - Stealth Native")
         .with_inner_size(LogicalSize::new(1020.0, 680.0))
-        .with_decorations(true)
+        .with_decorations(false)
+        .with_resizable(true)
         .build(&event_loop)
         .expect("Failed to create native desktop window");
 
@@ -93,14 +104,30 @@ fn main() {
     let data_dir = PathBuf::from(local_data).join("JosjisStealthNativeProfile");
     let mut web_context = WebContext::new(Some(data_dir));
 
+    let ipc_proxy = proxy.clone();
     let _webview = WebViewBuilder::new_with_web_context(&mut web_context)
         .with_url(&target_url)
         .with_devtools(false)
+        .with_ipc_handler(move |req| {
+            let body = req.body();
+            if body.contains("minimize-window") {
+                let _ = ipc_proxy.send_event(UserEvent::Minimize);
+            } else if body.contains("maximize-window") {
+                let _ = ipc_proxy.send_event(UserEvent::Maximize);
+            } else if body.contains("close-app") {
+                let _ = ipc_proxy.send_event(UserEvent::Close);
+            } else if body.contains("drag-window") {
+                let _ = ipc_proxy.send_event(UserEvent::Drag);
+            } else if body.contains("hide-window") {
+                toggle_boss_key();
+            }
+        })
         .build(&window)
         .expect("Failed to initialize embedded native WebView2");
 
     // Stealth Hotkey Background Monitor (Boss Key Alt+Q & Panic Key Esc)
-    thread::spawn(|| {
+    let hotkey_proxy = proxy.clone();
+    thread::spawn(move || {
         let mut boss_key_debounced = false;
 
         while IS_RUNNING.load(Ordering::SeqCst) {
@@ -133,7 +160,7 @@ fn main() {
                     if (esc as i32 & 0x8000) != 0 {
                         let fg = GetForegroundWindow();
                         if fg == hwnd {
-                            ShowWindow(hwnd, SW_MINIMIZE);
+                            let _ = hotkey_proxy.send_event(UserEvent::Minimize);
                             thread::sleep(Duration::from_millis(300));
                         }
                     }
@@ -146,6 +173,19 @@ fn main() {
         *control_flow = ControlFlow::Wait;
 
         match event {
+            Event::UserEvent(UserEvent::Minimize) => {
+                window.set_minimized(true);
+            }
+            Event::UserEvent(UserEvent::Maximize) => {
+                window.set_maximized(!window.is_maximized());
+            }
+            Event::UserEvent(UserEvent::Close) => {
+                IS_RUNNING.store(false, Ordering::SeqCst);
+                *control_flow = ControlFlow::Exit;
+            }
+            Event::UserEvent(UserEvent::Drag) => {
+                let _ = window.drag_window();
+            }
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 ..
