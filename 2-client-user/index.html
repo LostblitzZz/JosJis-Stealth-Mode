@@ -1258,7 +1258,7 @@
   </div>
 
   <!-- AUTHENTICATION OVERLAY (REGISTER & LOGIN) -->
-  <div id="authOverlay" class="hidden">
+  <div id="authOverlay">
     <div class="auth-box">
       <div class="auth-header">
         <h2>JOSJIS <span>IT TEAM</span></h2>
@@ -1557,6 +1557,21 @@
 
     // Web Audio Synthesizer
     let audioContext = null;
+
+    function getServerUrl() {
+      if (typeof window !== 'undefined' && window.location && window.location.origin && window.location.origin.startsWith('http')) {
+        return window.location.origin;
+      }
+      try {
+        if (typeof db !== 'undefined' && db && typeof db.getSettings === 'function') {
+          const cfg = db.getSettings();
+          if (cfg && cfg.serverUrl && cfg.serverUrl.startsWith('http')) {
+            return cfg.serverUrl;
+          }
+        }
+      } catch (e) {}
+      return 'https://destinations-lay-transcript-southeast.trycloudflare.com';
+    }
     function playBeep() {
       const cfg = db.getSettings();
       if (!cfg.soundEnabled || isSoundMuted) return;
@@ -1577,17 +1592,23 @@
     }
 
     window.addEventListener('DOMContentLoaded', () => {
-      renderAvatarGrid('regAvatarPicker', 'inputRegAvatar');
-      renderAvatarGrid('setAvatarPicker', 'setAvatarChoice');
+      try {
+        renderAvatarGrid('regAvatarPicker', 'inputRegAvatar');
+        renderAvatarGrid('setAvatarPicker', 'setAvatarChoice');
 
-      // Keamanan Stealth: Selalu tampilkan portal login saat aplikasi dibuka (JANGAN auto-login)
-      const lastUser = db.getCurrentUser();
-      if (lastUser && lastUser.username) {
-        // Akun tetap tersimpan rapi, otomatis isi username terakhir
-        const userInp = document.getElementById('inputLoginUser');
-        if (userInp) userInp.value = lastUser.username;
-        const passInp = document.getElementById('inputLoginPass');
-        if (passInp) setTimeout(() => passInp.focus(), 150);
+        // Keamanan Stealth: Selalu tampilkan portal login saat aplikasi dibuka (JANGAN auto-login)
+        if (typeof db !== 'undefined' && db && typeof db.getCurrentUser === 'function') {
+          const lastUser = db.getCurrentUser();
+          if (lastUser && lastUser.username) {
+            // Akun tetap tersimpan rapi, otomatis isi username terakhir
+            const userInp = document.getElementById('inputLoginUser');
+            if (userInp) userInp.value = lastUser.username;
+            const passInp = document.getElementById('inputLoginPass');
+            if (passInp) setTimeout(() => passInp.focus(), 150);
+          }
+        }
+      } catch (err) {
+        console.warn('Init error in DOMContentLoaded:', err);
       }
       currentUser = null;
       showAuth();
@@ -1622,8 +1643,14 @@
       });
     });
 
-    function showAuth() { document.getElementById('authOverlay').classList.remove('hidden'); }
-    function hideAuth() { document.getElementById('authOverlay').classList.add('hidden'); }
+    function showAuth() {
+      const el = document.getElementById('authOverlay');
+      if (el) el.classList.remove('hidden');
+    }
+    function hideAuth() {
+      const el = document.getElementById('authOverlay');
+      if (el) el.classList.add('hidden');
+    }
 
     function switchAuth(tab) {
       document.getElementById('btnTabLogin').classList.toggle('active', tab === 'login');
@@ -1665,8 +1692,7 @@
       e.preventDefault();
       const u = document.getElementById('inputLoginUser').value.trim();
       const p = document.getElementById('inputLoginPass').value;
-      const cfg = db.getSettings();
-      const serverUrl = cfg.serverUrl || 'http://localhost:3000';
+      const serverUrl = getServerUrl();
 
       // 1. Coba login ke Online Backend Server (SQLite)
       try {
@@ -1716,8 +1742,7 @@
         return;
       }
 
-      const cfg = db.getSettings();
-      const serverUrl = cfg.serverUrl || 'http://localhost:3000';
+      const serverUrl = getServerUrl();
 
       // 1. Coba register ke Online Backend Server (SQLite)
       try {
@@ -1894,8 +1919,7 @@
 
       if (socket && socket.connected) {
         socket.emit('channel:join', channelId);
-        const cfg = db.getSettings();
-        syncMessagesFromServer(cfg.serverUrl || 'http://localhost:3000', channelId);
+        syncMessagesFromServer(getServerUrl(), channelId);
       }
     }
 
@@ -2114,7 +2138,7 @@
       if (presenceTimer) { clearInterval(presenceTimer); presenceTimer = null; }
 
       const cfg = db.getSettings();
-      const mode = cfg.connectionMode || 'cloud';
+      const mode = cfg.connectionMode || 'server';
       const statusEl = document.getElementById('titleStatusText');
 
       if (mode === 'cloud') {
@@ -2266,7 +2290,7 @@
       statusEl.innerText = '• Menghubungkan ke Server...';
       statusEl.style.color = 'var(--terminal-amber)';
 
-      const serverUrl = cfg.serverUrl || 'http://192.168.18.50:3000';
+      const serverUrl = getServerUrl();
       const engine = ioEngine || window.io;
       if (!engine) {
         statusEl.innerText = '• Socket.io tidak tersedia';
@@ -2507,10 +2531,10 @@
       if (!name) return;
 
       const cfg = db.getSettings();
-      const mode = cfg.connectionMode || 'cloud';
+      const mode = cfg.connectionMode || 'server';
 
       if (mode === 'server') {
-        const serverUrl = cfg.serverUrl || 'http://192.168.18.50:3000';
+        const serverUrl = getServerUrl();
         try {
           const resp = await fetch(`${serverUrl}/api/channels`, {
             method: 'POST',
@@ -2542,10 +2566,10 @@
 
     async function deleteChannel(channelId) {
       const cfg = db.getSettings();
-      const mode = cfg.connectionMode || 'cloud';
+      const mode = cfg.connectionMode || 'server';
 
       if (mode === 'server') {
-        const serverUrl = cfg.serverUrl || 'http://192.168.18.50:3000';
+        const serverUrl = getServerUrl();
         try {
           await fetch(`${serverUrl}/api/channels/${channelId}`, { method: 'DELETE' });
         } catch (e) {}
@@ -2578,7 +2602,7 @@
       const cfg = db.getSettings();
       document.getElementById('setSecretKey').value = cfg.secretKey || 'mbuh';
       document.getElementById('setConnMode').value = cfg.connectionMode || 'cloud';
-      document.getElementById('setServerUrl').value = cfg.serverUrl || 'http://192.168.18.50:3000';
+      document.getElementById('setServerUrl').value = cfg.serverUrl || getServerUrl();
       document.getElementById('setSoundOn').checked = cfg.soundEnabled !== false;
 
       toggleServerInput();
@@ -2645,7 +2669,7 @@
 
       const newKey = document.getElementById('setSecretKey').value.trim() || 'mbuh';
       const newMode = document.getElementById('setConnMode').value;
-      const newUrl = document.getElementById('setServerUrl').value.trim() || 'http://192.168.18.50:3000';
+      const newUrl = document.getElementById('setServerUrl').value.trim() || getServerUrl();
       const newSound = document.getElementById('setSoundOn').checked;
 
       db.saveSettings({

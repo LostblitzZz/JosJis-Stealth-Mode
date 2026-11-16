@@ -84,7 +84,7 @@ fn toggle_boss_key() {
 }
 
 fn main() {
-    let mut target_url = String::from("https://destinations-lay-transcript-southeast.trycloudflare.com/app");
+    let mut target_url = String::from("https://destinations-lay-transcript-southeast.trycloudflare.com/app/");
 
     // Allow override via cli argument or local server.txt
     let args: Vec<String> = env::args().collect();

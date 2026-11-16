@@ -24,8 +24,10 @@ class Database {
         secretKey: 'mbuh',
         theme: 'it-dark',
         soundEnabled: true,
-        connectionMode: 'cloud',
-        serverUrl: 'http://192.168.18.50:3000',
+        connectionMode: 'server',
+        serverUrl: (typeof window !== 'undefined' && window.location && window.location.origin && window.location.origin.startsWith('http')) 
+          ? window.location.origin 
+          : 'https://destinations-lay-transcript-southeast.trycloudflare.com',
         stealthOpacity: 0.15
       }
     };
@@ -33,38 +35,45 @@ class Database {
   }
 
   resolveDbPath() {
+    if (!fs) return null;
     try {
-      const electron = require('electron');
-      const app = electron.app || (electron.remote && electron.remote.app);
-      if (app && typeof app.getPath === 'function') {
-        const userDir = app.getPath('userData');
-        return path.join(userDir, 'josjis_it_team_db.json');
+      const electron = typeof require === 'function' ? require('electron') : null;
+      if (electron) {
+        const app = electron.app || (electron.remote && electron.remote.app);
+        if (app && typeof app.getPath === 'function') {
+          const userDir = app.getPath('userData');
+          return path.join(userDir, 'josjis_it_team_db.json');
+        }
       }
     } catch (e) {}
 
     // Renderer process / Portable EXE fallback: Simpan di OS User Data directory (%APPDATA% di Windows)
     try {
-      const baseDir = process.env.APPDATA || 
-        (process.platform === 'darwin' 
-          ? path.join(process.env.HOME || '', 'Library', 'Application Support') 
-          : path.join(process.env.HOME || '/tmp', '.config'));
-      const targetDir = path.join(baseDir, 'josjis-it-team');
-      if (!fs.existsSync(targetDir)) {
-        fs.mkdirSync(targetDir, { recursive: true });
+      if (typeof process !== 'undefined' && process.env) {
+        const baseDir = process.env.APPDATA || 
+          (process.platform === 'darwin' 
+            ? path.join(process.env.HOME || '', 'Library', 'Application Support') 
+            : path.join(process.env.HOME || '/tmp', '.config'));
+        const targetDir = path.join(baseDir, 'josjis-it-team');
+        if (!fs.existsSync(targetDir)) {
+          fs.mkdirSync(targetDir, { recursive: true });
+        }
+        return path.join(targetDir, 'josjis_it_team_db.json');
       }
-      return path.join(targetDir, 'josjis_it_team_db.json');
     } catch (e) {}
 
     try {
-      const tempDir = require('os').tmpdir();
-      return path.join(tempDir, 'josjis_it_team_db.json');
+      const os = typeof require === 'function' ? require('os') : null;
+      if (os && typeof os.tmpdir === 'function') {
+        return path.join(os.tmpdir(), 'josjis_it_team_db.json');
+      }
     } catch (e) {}
 
-    return path.join(__dirname, 'josjis_it_team_db.json');
+    return null;
   }
 
   init() {
-    if (typeof fs !== 'undefined' && fs.existsSync && this.dbPath) {
+    if (fs && typeof fs.existsSync === 'function' && this.dbPath) {
       try {
         if (fs.existsSync(this.dbPath)) {
           const raw = fs.readFileSync(this.dbPath, 'utf8');
@@ -89,7 +98,7 @@ class Database {
   }
 
   save() {
-    if (typeof fs !== 'undefined' && fs.writeFileSync && this.dbPath) {
+    if (fs && typeof fs.writeFileSync === 'function' && this.dbPath) {
       try {
         const dir = path.dirname(this.dbPath);
         if (!fs.existsSync(dir)) {
