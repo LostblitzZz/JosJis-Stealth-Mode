@@ -33,4 +33,5 @@ Thumbs.db
 *.db-wal
 server_db.json
 *.db.tmp
+public-url.txt
 

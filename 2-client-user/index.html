@@ -2691,6 +2691,29 @@
       document.getElementById('stealthBtn').classList.toggle('active', isStealth);
     }
 
+    // Stealth Hotkeys (Alt+Q dan Esc)
+    window.addEventListener('keydown', (e) => {
+      // 1. Boss Key: Alt + Q
+      if (e.altKey && (e.key === 'q' || e.key === 'Q')) {
+        e.preventDefault();
+        toggleStealth();
+      }
+      // 2. Panic Key: Esc (Tutup modal atau langsung Ghost dimming)
+      if (e.key === 'Escape') {
+        const modals = document.querySelectorAll('.modal-overlay');
+        let modalOpen = false;
+        modals.forEach(m => {
+          if (m.classList.contains('active')) {
+            m.classList.remove('active');
+            modalOpen = true;
+          }
+        });
+        if (!modalOpen) {
+          toggleStealth();
+        }
+      }
+    });
+
     ipcRenderer.on('mini-mode-changed', (event, isMini) => {
       document.body.classList.toggle('mini-mode', isMini);
       document.getElementById('miniBtn').innerText = isMini ? '🗗 Normal' : 'Mini Mode';
