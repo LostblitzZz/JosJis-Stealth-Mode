@@ -16,47 +16,35 @@ let isMiniMode = false;
 let normalBounds = { width: 980, height: 620 };
 
 function createTrayIcon() {
-  // Buat icon tray 16x16 pixel biru-cyan secara dinamis tanpa butuh file eksternal
-  const size = 16;
-  const canvas = Buffer.alloc(size * size * 4);
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const idx = (y * size + x) * 4;
-      // Gambar shield sederhana
-      const isShield = (x >= 2 && x <= 13 && y >= 2 && y <= 9) || 
-                       (y >= 9 && y <= 14 && Math.abs(x - 7.5) <= (14 - y) * 1.2);
-      if (isShield) {
-        canvas[idx] = 14;      // R
-        canvas[idx + 1] = 165;  // G
-        canvas[idx + 2] = 233;  // B (Cyan #0ea5e9)
-        canvas[idx + 3] = 255;  // Alpha
-      } else {
-        canvas[idx + 3] = 0;
+  try {
+    // 16x16 shield cyan icon in standard PNG format (cross-platform, zero crash)
+    const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAZElEQVQ4T2NkoBAwUqifYdQAIb2M/xn+M1Cgnx8UuP/jwwjDDAwMDJycXAwMDIwMPz48YGBiYmJA5mM1gIF4fTA+fRzGDAx4vY9sACwXkOVlVAbAcgSygWADA0b7qPGBkF5pEAMAAMY4L440tq8AAAAASUVORK5CYII=';
+    const icon = nativeImage.createFromDataURL(`data:image/png;base64,${pngBase64}`);
+    tray = new Tray(icon);
+    tray.setToolTip('JOSJIS IT TEAM - Internal Secure Console');
+
+    const contextMenu = Menu.buildFromTemplate([
+      { label: 'Buka JOSJIS IT TEAM', click: () => { if (win) { win.show(); win.focus(); } } },
+      { label: 'Toggle Mode Mini Melayang', click: () => { toggleMiniMode(); } },
+      { label: 'Boss Key (Alt+Q)', click: () => { toggleBossKey(); } },
+      { type: 'separator' },
+      { label: 'Keluar Aplikasi', click: () => { app.quit(); } }
+    ]);
+
+    tray.setContextMenu(contextMenu);
+    tray.on('double-click', () => {
+      if (win) {
+        if (win.isVisible()) {
+          win.focus();
+        } else {
+          win.show();
+          win.focus();
+        }
       }
-    }
+    });
+  } catch (err) {
+    console.warn('[Tray] Gagal inisialisasi tray (diabaikan agar app tetap jalan):', err);
   }
-
-  const icon = nativeImage.createFromBuffer(canvas, { width: size, height: size });
-  tray = new Tray(icon);
-  tray.setToolTip('JOSJIS IT TEAM - Internal Secure Console');
-
-  const contextMenu = Menu.buildFromTemplate([
-    { label: 'Buka JOSJIS IT TEAM', click: () => { win.show(); win.focus(); } },
-    { label: 'Toggle Mode Mini Melayang', click: () => { toggleMiniMode(); } },
-    { label: 'Boss Key (Alt+Q)', click: () => { toggleBossKey(); } },
-    { type: 'separator' },
-    { label: 'Keluar Aplikasi', click: () => { app.quit(); } }
-  ]);
-
-  tray.setContextMenu(contextMenu);
-  tray.on('double-click', () => {
-    if (win.isVisible()) {
-      win.focus();
-    } else {
-      win.show();
-      win.focus();
-    }
-  });
 }
 
 function toggleBossKey() {
@@ -133,11 +121,18 @@ function createWindow() {
     }
   });
 
-  win.loadFile('index.html');
+  win.loadFile(path.join(__dirname, 'index.html'));
 
   win.once('ready-to-show', () => {
     win.show();
   });
+
+  // Fallback pengaman jika ready-to-show tertunda
+  setTimeout(() => {
+    if (win && !win.isVisible()) {
+      win.show();
+    }
+  }, 1500);
 
   createTrayIcon();
 

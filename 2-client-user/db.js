@@ -4,9 +4,12 @@
  * Uses JSON file storage in Electron's userData path with atomic writes.
  */
 
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
+const fs = typeof require === 'function' ? (function(){ try { return require('fs'); } catch(e){ return null; } })() : null;
+const path = typeof require === 'function' ? (function(){ try { return require('path'); } catch(e){ return null; } })() : {
+  join: (...args) => args.join('/').replace(/\/+/g, '/'),
+  dirname: (p) => p.substring(0, p.lastIndexOf('/'))
+};
+const crypto = typeof require === 'function' ? (function(){ try { return require('crypto'); } catch(e){ return null; } })() : null;
 
 class Database {
   constructor() {
@@ -38,22 +41,47 @@ class Database {
         return path.join(userDir, 'josjis_it_team_db.json');
       }
     } catch (e) {}
-    const localDir = path.join(__dirname, 'data');
-    if (!fs.existsSync(localDir)) {
-      try { fs.mkdirSync(localDir, { recursive: true }); } catch (err) {}
-    }
-    return path.join(localDir, 'josjis_it_team_db.json');
+
+    // Renderer process / Portable EXE fallback: Simpan di OS User Data directory (%APPDATA% di Windows)
+    try {
+      const baseDir = process.env.APPDATA || 
+        (process.platform === 'darwin' 
+          ? path.join(process.env.HOME || '', 'Library', 'Application Support') 
+          : path.join(process.env.HOME || '/tmp', '.config'));
+      const targetDir = path.join(baseDir, 'josjis-it-team');
+      if (!fs.existsSync(targetDir)) {
+        fs.mkdirSync(targetDir, { recursive: true });
+      }
+      return path.join(targetDir, 'josjis_it_team_db.json');
+    } catch (e) {}
+
+    try {
+      const tempDir = require('os').tmpdir();
+      return path.join(tempDir, 'josjis_it_team_db.json');
+    } catch (e) {}
+
+    return path.join(__dirname, 'josjis_it_team_db.json');
   }
 
   init() {
-    try {
-      if (fs.existsSync(this.dbPath)) {
-        const raw = fs.readFileSync(this.dbPath, 'utf8');
-        const parsed = JSON.parse(raw);
-        this.data = Object.assign(this.data, parsed);
+    if (typeof fs !== 'undefined' && fs.existsSync && this.dbPath) {
+      try {
+        if (fs.existsSync(this.dbPath)) {
+          const raw = fs.readFileSync(this.dbPath, 'utf8');
+          const parsed = JSON.parse(raw);
+          this.data = Object.assign(this.data, parsed);
+        }
+      } catch (e) {
+        console.error('[DB] Gagal memuat database lama, membuat baru:', e);
       }
-    } catch (e) {
-      console.error('[DB] Gagal memuat database lama, membuat baru:', e);
+    } else if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const raw = window.localStorage.getItem('josjis_it_team_db');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          this.data = Object.assign(this.data, parsed);
+        }
+      } catch (e) {}
     }
 
     this.ensureDefaultChannels();
@@ -61,16 +89,22 @@ class Database {
   }
 
   save() {
-    try {
-      const dir = path.dirname(this.dbPath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
+    if (typeof fs !== 'undefined' && fs.writeFileSync && this.dbPath) {
+      try {
+        const dir = path.dirname(this.dbPath);
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+        const tmpPath = this.dbPath + '.tmp';
+        fs.writeFileSync(tmpPath, JSON.stringify(this.data, null, 2), 'utf8');
+        fs.renameSync(tmpPath, this.dbPath);
+      } catch (e) {
+        console.error('[DB] Gagal menyimpan data ke disk:', e);
       }
-      const tmpPath = this.dbPath + '.tmp';
-      fs.writeFileSync(tmpPath, JSON.stringify(this.data, null, 2), 'utf8');
-      fs.renameSync(tmpPath, this.dbPath);
-    } catch (e) {
-      console.error('[DB] Gagal menyimpan data:', e);
+    } else if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        window.localStorage.setItem('josjis_it_team_db', JSON.stringify(this.data));
+      } catch (e) {}
     }
   }
 
@@ -100,12 +134,25 @@ class Database {
   // ================= USER & AUTHENTICATION =================
 
   hashPassword(password, salt) {
+    if (!crypto) {
+      if (!salt) salt = Math.random().toString(36).substring(2, 10);
+      let hash = 0;
+      for (let i = 0; i < (password + salt).length; i++) {
+        hash = ((hash << 5) - hash) + (password + salt).charCodeAt(i);
+        hash |= 0;
+      }
+      return { hash: Math.abs(hash).toString(16), salt };
+    }
     if (!salt) salt = crypto.randomBytes(16).toString('hex');
     const hash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
     return { hash, salt };
   }
 
   verifyPassword(password, hash, salt) {
+    if (!crypto) {
+      const v = this.hashPassword(password, salt);
+      return v.hash === hash;
+    }
     const verify = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
     return verify === hash;
   }
@@ -376,4 +423,12 @@ class Database {
   }
 }
 
-module.exports = new Database();
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = new Database();
+}
+if (typeof window !== 'undefined') {
+  window.JosjisDB = Database;
+  if (!window.db) {
+    window.db = new Database();
+  }
+}

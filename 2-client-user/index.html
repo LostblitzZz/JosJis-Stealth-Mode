@@ -7,6 +7,7 @@
   <!-- Standalone Bundled Realtime Engines (Nol Dependensi & Anti-Gagal) -->
   <script src="./mqtt.min.js"></script>
   <script src="./socket.io.min.js"></script>
+  <script src="./db.js"></script>
   <style>
     :root {
       --bg-base: #0b0f14;        /* Deep terminal black-blue */
@@ -1471,17 +1472,32 @@
   </div>
 
   <script>
-    const { ipcRenderer } = require('electron');
-    const crypto = require('crypto');
-    const db = require('./db.js');
+    const isElectron = typeof require === 'function' && typeof process !== 'undefined' && process.versions && !!process.versions.electron;
+    const ipcRenderer = isElectron ? require('electron').ipcRenderer : {
+      send: (channel, ...args) => {
+        if (channel === 'open-external' && args[0]) {
+          window.open(args[0], '_blank');
+        }
+      },
+      on: () => {}
+    };
+    const crypto = isElectron ? require('crypto') : null;
+    const db = (typeof window !== 'undefined' && window.db) ? window.db : (isElectron ? require('./db.js') : null);
 
     // Standalone / Bundled Realtime Engines (Nol Crash)
-    const mqttEngine = window.mqtt || (function() { try { return require('mqtt'); } catch(e){ return null; } })();
-    const ioEngine = window.io || (function() { try { return require('socket.io-client').io || require('socket.io-client'); } catch(e){ return null; } })();
+    const mqttEngine = window.mqtt || (function() { try { return typeof require === 'function' ? require('mqtt') : null; } catch(e){ return null; } })();
+    const ioEngine = window.io || (function() { try { return typeof require === 'function' ? (require('socket.io-client').io || require('socket.io-client')) : null; } catch(e){ return null; } })();
 
-    // ================= ENKRIPSI END-TO-END (AES-256-GCM) =================
+    // ================= ENKRIPSI END-TO-END (AES-256-GCM / Fallback) =================
     function encryptText(plainText, secretKey) {
       if (!plainText) return '';
+      if (!crypto) {
+        try {
+          return 'b64:' + btoa(encodeURIComponent(plainText));
+        } catch (e) {
+          return plainText;
+        }
+      }
       try {
         const key = crypto.createHash('sha256').update(secretKey || 'mbuh').digest();
         const iv = crypto.randomBytes(12);
@@ -1495,7 +1511,16 @@
     }
 
     function decryptText(cipherText, secretKey) {
-      if (!cipherText || !cipherText.includes(':')) return cipherText;
+      if (!cipherText) return '';
+      if (cipherText.startsWith('b64:')) {
+        try {
+          return decodeURIComponent(atob(cipherText.substring(4)));
+        } catch (e) {
+          return cipherText;
+        }
+      }
+      if (!cipherText.includes(':')) return cipherText;
+      if (!crypto) return cipherText;
       try {
         const parts = cipherText.split(':');
         if (parts.length !== 3) return cipherText;

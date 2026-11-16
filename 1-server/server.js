@@ -25,6 +25,10 @@ app.use(cors());
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
+// Static Web Console & Client Assets
+app.use('/app', express.static(path.join(__dirname, '../2-client-user')));
+app.use('/compact', express.static(path.join(__dirname, '../3-compact-client')));
+
 // ================= PASSWORD UTILS =================
 function hashPassword(password, salt) {
   if (!salt) salt = crypto.randomBytes(16).toString('hex');
@@ -58,6 +62,9 @@ app.get('/', (req, res) => {
     } catch (_) {}
   }
 
+  const compactZipPath = path.join(__dirname, '../3-compact-client/josjis-compact.zip');
+  const compactAvailable = fs.existsSync(compactZipPath);
+
   if (req.accepts('html')) {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     return res.send(`<!DOCTYPE html>
@@ -67,14 +74,20 @@ app.get('/', (req, res) => {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>JOSJIS IT TEAM - Central Server</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0a0e14; color: #d3c6aa; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-    .card { background: #151b23; border: 1px solid #30363d; border-radius: 12px; padding: 36px 32px; max-width: 480px; width: 90%; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0a0e14; color: #d3c6aa; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px 0; box-sizing: border-box; }
+    .card { background: #151b23; border: 1px solid #30363d; border-radius: 12px; padding: 36px 32px; max-width: 520px; width: 92%; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
     h1 { color: #a7c080; margin: 12px 0 6px 0; font-size: 24px; letter-spacing: 0.5px; }
-    p { color: #859289; font-size: 14px; margin-bottom: 26px; }
+    p { color: #859289; font-size: 14px; margin-bottom: 24px; }
     .badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: bold; background: rgba(167, 192, 128, 0.15); color: #a7c080; }
-    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: #a7c080; color: #151b23; text-decoration: none; font-weight: bold; padding: 13px 28px; border-radius: 8px; font-size: 15px; transition: all 0.2s; box-shadow: 0 4px 12px rgba(167, 192, 128, 0.3); }
-    .btn:hover { background: #83c092; transform: translateY(-2px); box-shadow: 0 6px 16px rgba(167, 192, 128, 0.4); }
-    .meta { font-size: 12px; color: #7fbbb3; margin-top: 14px; }
+    .btn-group { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none; font-weight: bold; padding: 12px 20px; border-radius: 8px; font-size: 14px; transition: all 0.2s; }
+    .btn-primary { background: #a7c080; color: #151b23; box-shadow: 0 4px 12px rgba(167, 192, 128, 0.3); }
+    .btn-primary:hover { background: #83c092; transform: translateY(-2px); box-shadow: 0 6px 16px rgba(167, 192, 128, 0.4); }
+    .btn-compact { background: #0ea5e9; color: #0b0f14; box-shadow: 0 4px 12px rgba(14, 165, 233, 0.3); }
+    .btn-compact:hover { background: #38bdf8; transform: translateY(-2px); }
+    .btn-secondary { background: #21262d; color: #d3c6aa; border: 1px solid #30363d; }
+    .btn-secondary:hover { background: #30363d; }
+    .meta { font-size: 12px; color: #7fbbb3; margin-top: 4px; }
     .db-badge { font-size: 11px; color: #9da9a0; margin-top: 20px; border-top: 1px solid #21262d; padding-top: 14px; }
   </style>
 </head>
@@ -83,12 +96,29 @@ app.get('/', (req, res) => {
     <div class="badge">● SERVER ONLINE &amp; WAL PERSISTENT</div>
     <h1>JOSJIS IT TEAM</h1>
     <p>Central Synchronization &amp; Stealth Ops Network</p>
-    ${exeAvailable ? `
-      <a class="btn" href="/download/josjis.exe">⬇️ Download josjis.exe (${exeSize} MB)</a>
-      <div class="meta">Executable Windows Portable versi terbaru</div>
-    ` : `
-      <div class="meta" style="color: #e67e80;">Executable belum di-build</div>
-    `}
+
+    <div class="btn-group">
+      <!-- 1. Buka di Browser Langsung -->
+      <div>
+        <a class="btn btn-primary" style="width: 85%;" href="/app">🌐 Buka Web Console Langsung</a>
+        <div class="meta">Buka di browser apapun tanpa install/download</div>
+      </div>
+
+      <!-- 2. Compact Stealth Client (< 50 KB) -->
+      <div>
+        <a class="btn btn-compact" style="width: 85%;" href="/download/josjis-compact.zip">⚡ Download Josjis Compact Client (Hanya ~5 KB)</a>
+        <div class="meta">Native C# stealth runner (< 50 KB) + Boss Key (Alt+Q) & Ghost Mode</div>
+      </div>
+
+      <!-- 3. Electron Portable EXE -->
+      ${exeAvailable ? `
+        <div>
+          <a class="btn btn-secondary" style="width: 85%;" href="/download/josjis.exe">📦 Download Full Desktop EXE (${exeSize} MB)</a>
+          <div class="meta">Electron Portable Executable</div>
+        </div>
+      ` : ''}
+    </div>
+
     <div class="db-badge">Database: SQLite3 WAL Mode | Realtime: Socket.io + Cloud MQTT</div>
   </div>
 </body>
@@ -100,6 +130,8 @@ app.get('/', (req, res) => {
     name: 'JOSJIS IT TEAM Central Server',
     version: '2.2.0',
     database: 'SQLite3 (Persistent)',
+    webApp: '/app',
+    compactClient: '/download/josjis-compact.zip',
     downloadExe: exeAvailable ? '/download/josjis.exe' : null
   });
 });
@@ -111,6 +143,26 @@ app.get('/download/josjis.exe', (req, res) => {
     res.download(exePath, 'josjis.exe');
   } else {
     res.status(404).json({ error: 'Executable not found. Please compile client first.' });
+  }
+});
+
+// Download Compact Client Package
+app.get('/download/josjis-compact.zip', (req, res) => {
+  const zipPath = path.join(__dirname, '../3-compact-client/josjis-compact.zip');
+  if (fs.existsSync(zipPath)) {
+    res.download(zipPath, 'josjis-compact.zip');
+  } else {
+    res.status(404).json({ error: 'Compact client package not found.' });
+  }
+});
+
+// Download Quick Launch Batch
+app.get('/download/Josjis-Quick-Launch.bat', (req, res) => {
+  const batPath = path.join(__dirname, '../3-compact-client/Josjis-Quick-Launch.bat');
+  if (fs.existsSync(batPath)) {
+    res.download(batPath, 'Josjis-Quick-Launch.bat');
+  } else {
+    res.status(404).json({ error: 'Quick launcher not found.' });
   }
 });
 
