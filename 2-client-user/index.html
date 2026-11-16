@@ -1492,8 +1492,8 @@
       },
       on: () => {}
     };
-    const crypto = isElectron ? require('crypto') : null;
-    const db = (typeof window !== 'undefined' && window.db) ? window.db : (isElectron ? require('./db.js') : null);
+    const nodeCrypto = isElectron ? require('crypto') : null;
+    var db = (typeof window !== 'undefined' && window.db) ? window.db : (isElectron ? require('./db.js') : null);
 
     // Standalone / Bundled Realtime Engines (Nol Crash)
     const mqttEngine = window.mqtt || (function() { try { return typeof require === 'function' ? require('mqtt') : null; } catch(e){ return null; } })();
@@ -1502,7 +1502,7 @@
     // ================= ENKRIPSI END-TO-END (AES-256-GCM / Fallback) =================
     function encryptText(plainText, secretKey) {
       if (!plainText) return '';
-      if (!crypto) {
+      if (!nodeCrypto) {
         try {
           return 'b64:' + btoa(encodeURIComponent(plainText));
         } catch (e) {
@@ -1510,9 +1510,9 @@
         }
       }
       try {
-        const key = crypto.createHash('sha256').update(secretKey || 'mbuh').digest();
-        const iv = crypto.randomBytes(12);
-        const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+        const key = nodeCrypto.createHash('sha256').update(secretKey || 'mbuh').digest();
+        const iv = nodeCrypto.randomBytes(12);
+        const cipher = nodeCrypto.createCipheriv('aes-256-gcm', key, iv);
         let enc = cipher.update(plainText, 'utf8', 'hex');
         enc += cipher.final('hex');
         return iv.toString('hex') + ':' + cipher.getAuthTag().toString('hex') + ':' + enc;
@@ -1531,13 +1531,13 @@
         }
       }
       if (!cipherText.includes(':')) return cipherText;
-      if (!crypto) return cipherText;
+      if (!nodeCrypto) return cipherText;
       try {
         const parts = cipherText.split(':');
         if (parts.length !== 3) return cipherText;
         const [ivHex, tagHex, enc] = parts;
-        const key = crypto.createHash('sha256').update(secretKey || 'mbuh').digest();
-        const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(ivHex, 'hex'));
+        const key = nodeCrypto.createHash('sha256').update(secretKey || 'mbuh').digest();
+        const decipher = nodeCrypto.createDecipheriv('aes-256-gcm', key, Buffer.from(ivHex, 'hex'));
         decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
         let dec = decipher.update(enc, 'hex', 'utf8');
         dec += decipher.final('utf8');

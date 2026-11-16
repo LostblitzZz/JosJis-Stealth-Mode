@@ -4,12 +4,15 @@
  * Uses JSON file storage in Electron's userData path with atomic writes.
  */
 
-const fs = typeof require === 'function' ? (function(){ try { return require('fs'); } catch(e){ return null; } })() : null;
-const path = typeof require === 'function' ? (function(){ try { return require('path'); } catch(e){ return null; } })() : {
-  join: (...args) => args.join('/').replace(/\/+/g, '/'),
-  dirname: (p) => p.substring(0, p.lastIndexOf('/'))
-};
-const crypto = typeof require === 'function' ? (function(){ try { return require('crypto'); } catch(e){ return null; } })() : null;
+(function (global) {
+  'use strict';
+
+  const fs = typeof require === 'function' ? (function(){ try { return require('fs'); } catch(e){ return null; } })() : null;
+  const path = typeof require === 'function' ? (function(){ try { return require('path'); } catch(e){ return null; } })() : {
+    join: (...args) => args.join('/').replace(/\/+/g, '/'),
+    dirname: (p) => p.substring(0, p.lastIndexOf('/'))
+  };
+  const crypto = typeof require === 'function' ? (function(){ try { return require('crypto'); } catch(e){ return null; } })() : null;
 
 class Database {
   constructor() {
@@ -432,12 +435,13 @@ class Database {
   }
 }
 
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = new Database();
-}
-if (typeof window !== 'undefined') {
-  window.JosjisDB = Database;
-  if (!window.db) {
-    window.db = new Database();
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = new Database();
   }
-}
+  if (typeof global !== 'undefined') {
+    global.JosjisDB = Database;
+    if (!global.db) {
+      global.db = new Database();
+    }
+  }
+})(typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : this));
