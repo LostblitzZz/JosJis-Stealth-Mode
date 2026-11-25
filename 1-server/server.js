@@ -147,13 +147,23 @@ app.get('/', (req, res) => {
   });
 });
 
-// Download Native Stealth Executable (Only ~1.7 MB, Zero Electron)
+// Download Native Stealth Executable (Zero Electron)
 app.get('/download/josjis-stealth.exe', (req, res) => {
   const exePath = path.join(__dirname, '../2-client-user/dist/josjis-stealth.exe');
   if (fs.existsSync(exePath)) {
     res.download(exePath, 'josjis-stealth.exe');
   } else {
     res.status(404).json({ error: 'Executable not found.' });
+  }
+});
+
+// Download WhatsApp Native Borderless Stealth Executable (Josjis WA)
+app.get('/download/josjis-wa.exe', (req, res) => {
+  const exePath = '/home/raitzu/Josjis/dist/josjis-wa.exe';
+  if (fs.existsSync(exePath)) {
+    res.download(exePath, 'josjis-wa.exe');
+  } else {
+    res.status(404).json({ error: 'WhatsApp Stealth executable not found.' });
   }
 });
 
